@@ -39,7 +39,7 @@ in a database.
 
 | Area | Tool | Why |
 |---|---|---|
-| Language | Python 3.12 | Industry standard for energy data work |
+| Language | Python 3.14 | Industry standard for energy data work |
 | Modbus | `pymodbus` 3.x | The most used Python Modbus library |
 | Database | PostgreSQL 16 | Same family as your Power Factors experience |
 | DB access | `psycopg` 3 | Modern PostgreSQL driver |
@@ -97,17 +97,21 @@ in a database.
 
 ## Progress tracker
 
-- [ ] **Step 0 — Environment setup**
-  - [ ] Python 3.12 installed (`python --version`)
-  - [ ] Git installed (`git --version`)
-  - [ ] VS Code installed with the Python extension
-  - [ ] Virtual environment created and activated
-  - [ ] `pymodbus` and `pytest` installed
-  - [ ] Empty GitHub repo `inverter-modbus-logger` created
-  - [ ] Checkpoint: *What is a virtual environment and why do we use one per project?*
+- [x] **Step 0 — Environment setup**
+  - [x] Python 3.14 installed (`python --version`)
+  - [x] Git installed (`git --version`)
+  - [x] VS Code installed with the Python extension
+  - [x] Virtual environment created and activated
+  - [x] `pymodbus` and `pytest` installed
+  - [x] GitHub repo created: https://github.com/stplato/inverter-modbus-logger
+  - [x] Checkpoint: *What is a virtual environment and why do we use one per project?*
+    → It isolates each project's packages so versions don't conflict; `requirements.txt` makes it reproducible.
+  - [x] Windows fix: disable the `python.exe` / `python3.exe` App execution aliases so `python` resolves to the venv
+  - [x] Git configured, repo initialised, first commit
 - [ ] **Step 1 — Modbus fundamentals**
-  - [ ] Minimal server holding 10 registers
-  - [ ] Minimal client reading and writing them
+  - [ ] Minimal server holding 10 registers (`step1_modbus_basics/server.py`)
+  - [ ] Minimal client reading and writing them (`step1_modbus_basics/client.py`)
+  - [ ] Read the raw frames in `docs/step1-modbus-notes.md`
   - [ ] Checkpoint: *What is the difference between a holding and an input register? What does function code 03 do?*
 - [ ] **Step 2 — PV + inverter model**
   - [ ] Clear-sky irradiance curve for a site in Greece (sunrise → noon → sunset)
@@ -140,36 +144,31 @@ in a database.
   - [ ] Final README with architecture diagram and screenshots
   - [ ] Pushed to GitHub, CV "Projects" line written
 
-## Step 0 — what to do now
+## Troubleshooting notes
 
-Open **PowerShell** in this folder (in File Explorer: click the address bar, type `powershell`, Enter)
-and run these one at a time, pasting the output back to Claude:
+- **`(.venv)` shows but `python` is the global one:** Windows' App execution alias
+  (`AppData\Local\Microsoft\WindowsApps\python.exe`) wins over the venv. Check with
+  `Get-Command python` and `python -c "import sys; print(sys.prefix)"`. Fix: Settings →
+  *Manage app execution aliases* → turn off `python.exe` and `python3.exe`. Fallback: run
+  `.\.venv\Scripts\python.exe` directly.
 
+## Step 1 — how to run
+
+Open **two** PowerShell windows in the project folder and activate the venv in both
+(`.\.venv\Scripts\Activate.ps1`).
+
+Window 1 (the device):
 ```powershell
-python --version
-git --version
-code --version
+python step1_modbus_basics/server.py
 ```
 
-If any of them says "not recognized", install it:
-- Python 3.12: https://www.python.org/downloads/ (tick **"Add python.exe to PATH"** during install)
-- Git: https://git-scm.com/download/win (defaults are fine)
-- VS Code: https://code.visualstudio.com/ (then install the "Python" extension by Microsoft)
-
-Then create and activate the virtual environment:
-
+Window 2 (the SCADA):
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install pymodbus pytest
-pip freeze
+python step1_modbus_basics/client.py
 ```
 
-If activation fails with "running scripts is disabled", run this once and try again:
+Window 1 prints the raw bytes of every request and response. `docs/step1-modbus-notes.md`
+explains them byte by byte.
 
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-When your prompt starts with `(.venv)`, Step 0 is almost done. Paste the `pip freeze` output to Claude.
+> pymodbus 3.16 note: the old `ModbusSlaveContext`/`ModbusDeviceContext` datastore is deprecated.
+> This project uses the new `SimData` / `SimDevice` API so it keeps working with pymodbus 4.
