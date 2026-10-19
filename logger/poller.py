@@ -35,7 +35,8 @@ class Poller:
         self.host, self.port, self.device_id = host, port, device_id
         self.models: dict[int, tuple[int, int]] = {}
         self.csv_dir = csv_dir
-        self.first_wh: float | None = None
+        self.last_wh: float | None = None   # last energy counter value we saw
+        self.logged_wh = 0.0                # energy measured while this logger ran
         self.backoff = 1.0
         self.next_attempt = 0.0
 
@@ -81,8 +82,16 @@ class Poller:
         else:
             t_dev = datetime.now()
 
-        if self.first_wh is None:
-            self.first_wh = inv["WH"]
+        # Energy = sum of counter INCREASES. If the counter goes backwards the device
+        # was reset or replaced: a real SCADA must not book negative energy.
+        if self.last_wh is not None:
+            delta = inv["WH"] - self.last_wh
+            if delta < 0:
+                print(f"  ! energy counter went BACKWARDS by {-delta / 1000:.1f} kWh "
+                      "(device reset/replaced?) - delta ignored")
+            else:
+                self.logged_wh += delta
+        self.last_wh = inv["WH"]
         return {
             "time_device": t_dev.isoformat(timespec="seconds"),
             "time_logger": datetime.now().isoformat(timespec="seconds"),
@@ -100,7 +109,7 @@ class Poller:
             "t_cabinet_c": inv["TmpCab"],
             "limit_pct": ctl.get("WMaxLimPct"),
             "limit_enabled": ctl.get("WMaxLim_Ena"),
-            "_e_today": (inv["WH"] - self.first_wh) / 1000,
+            "_e_logged": self.logged_wh / 1000,
         }
 
     def poll(self) -> None:
@@ -119,7 +128,7 @@ class Poller:
         limit = f"{row['limit_pct']:.0f}%" if row["limit_enabled"] else "off"
         print(f"{row['time_device'][:16].replace('T', ' ')}  {row['state']:9} "
               f"{row['ac_kw']:8.1f} {row['dc_kw']:8.1f} {row['dc_v']:6.1f} "
-              f"{row['hz']:6.2f} {row['t_heatsink_c']:6.1f} {row['_e_today']:12.1f}  {limit}")
+              f"{row['hz']:6.2f} {row['t_heatsink_c']:6.1f} {row['_e_logged']:12.1f}  {limit}")
         self.save(row)
 
     # --- storage (CSV for now; PostgreSQL in Step 6) ------------------------
