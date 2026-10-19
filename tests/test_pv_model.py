@@ -1,0 +1,46 @@
+"""Physics sanity checks for the PV model. Run: python -m pytest"""
+
+from datetime import datetime
+
+from simulator.pv_model import (ST_MPPT, ST_SLEEPING, ST_THROTTLED, Inverter, PlantConfig,
+                                dc_power, solar_position)
+
+CFG = PlantConfig()
+
+
+def test_sun_is_down_at_midnight_and_up_at_noon():
+    el_night, _ = solar_position(datetime(2026, 6, 21, 21, 0), CFG.latitude, CFG.longitude)
+    el_noon, az_noon = solar_position(datetime(2026, 6, 21, 10, 25), CFG.latitude, CFG.longitude)
+    assert el_night < 0
+    assert 74 < el_noon < 76          # 90 - 37.98 + 23.44 = 75.5 deg at the solstice
+    assert 170 < az_noon < 190        # sun is in the South
+
+
+def test_hot_cells_produce_less_power():
+    assert dc_power(CFG, 1000, 60) < dc_power(CFG, 1000, 25)
+
+
+def test_night_means_sleeping_and_zero_power():
+    s = Inverter(seed=1).step(datetime(2026, 7, 15, 2, 0))
+    assert s.state == ST_SLEEPING and s.ac_w == 0
+
+
+def test_inverter_clips_at_rated_power_on_cool_bright_day():
+    s = Inverter(seed=1).step(datetime(2026, 4, 15, 13, 30))
+    assert s.state == ST_THROTTLED
+    assert s.ac_w == CFG.p_ac_nom
+
+
+def test_power_limit_curtails_output():
+    inv = Inverter(seed=1, power_limit_pct=60, power_limit_enabled=True)
+    s = inv.step(datetime(2026, 4, 15, 13, 30))
+    assert s.ac_w == 60_000 and s.state == ST_THROTTLED
+
+
+def test_energy_counter_only_goes_up():
+    inv = Inverter(seed=1)
+    start = inv.energy_wh
+    for h in range(6, 21):
+        inv.step(datetime(2026, 7, 15, h, 0))
+    assert inv.energy_wh > start
+    assert inv.step(datetime(2026, 7, 15, 12, 0)).state in (ST_MPPT, ST_THROTTLED)

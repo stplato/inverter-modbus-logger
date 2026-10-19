@@ -40,135 +40,134 @@ in a database.
 | Area | Tool | Why |
 |---|---|---|
 | Language | Python 3.14 | Industry standard for energy data work |
-| Modbus | `pymodbus` 3.x | The most used Python Modbus library |
+| Modbus | `pymodbus` 3.16 (new `SimData`/`SimDevice` API) | The most used Python Modbus library |
 | Database | PostgreSQL 16 | Same family as your Power Factors experience |
 | DB access | `psycopg` 3 | Modern PostgreSQL driver |
 | Testing | `pytest` | Proves the code works, interviewers look for it |
 | Packaging | Docker + Docker Compose | Runs the whole system with one command |
 | Version control | Git + GitHub | Your public portfolio |
 
-## Planned folder structure
+## Folder structure
 
 ```
 01-inverter-modbus-logger/
-├── README.md               ← this file (the plan + progress tracker)
-├── requirements.txt
-├── .gitignore
-├── simulator/
-│   ├── pv_model.py         ← sun curve + inverter physics
-│   ├── sunspec_map.py      ← register addresses, scale factors
-│   └── server.py           ← Modbus TCP server
-├── logger/
-│   ├── decoder.py          ← raw registers → engineering values
-│   ├── poller.py           ← Modbus client loop
-│   ├── alarms.py           ← alarm rules
-│   └── db.py               ← PostgreSQL writes
-├── sql/
-│   └── schema.sql
-├── tests/
-├── docker-compose.yml
-└── docs/                   ← notes, screenshots, interview answers
+├── README.md                  ← this file (plan + progress tracker)
+├── requirements.txt / .gitignore
+├── step1_modbus_basics/       ← Step 1: 20-line server + client (learning sandbox)
+├── common/
+│   └── sunspec.py             ← SunSpec models 1, 103, 123 (+ vendor 64001), encode/decode helpers
+├── simulator/                 ← THE FIELD DEVICE
+│   ├── pv_model.py            ← Step 2: sun position → POA → cell temp → DC → AC, clipping
+│   ├── sunspec_map.py         ← Step 3: measurements → SunSpec registers with scale factors
+│   └── server.py              ← Step 4: live Modbus TCP server with a fast simulated clock
+├── logger/                    ← THE SCADA
+│   ├── decoder.py             ← Step 5: discover models, read blocks, apply scale factors
+│   ├── poller.py              ← Step 5: poll loop, CSV storage, COMMS_LOST + reconnect
+│   └── set_limit.py           ← Step 5: send a curtailment command (model 123)
+├── tests/                     ← pytest unit tests (12 tests)
+├── data/                      ← CSV output of the logger (not in Git)
+└── docs/                      ← notes and learning log
 ```
 
-## Time plan (8–10 h/week → about 5 weeks)
+Coming in Steps 6–8: `sql/schema.sql`, `logger/db.py`, `logger/alarms.py`, `docker-compose.yml`.
 
-| Step | Topic | Hours | Week |
+## How to run the whole system
+
+Open **three** PowerShell windows in the project folder. In each, first run
+`.\.venv\Scripts\Activate.ps1`.
+
+**Window 1 — the inverter** (a whole day passes in ~15 minutes at 60x):
+```powershell
+python -m simulator.server
+python -m simulator.server --start "2026-04-15 10:00" --speed 120    # spring day, clipping at noon
+python -m simulator.server --weather cloudy                          # passing clouds
+```
+
+**Window 2 — the SCADA logger** (one line + one CSV row every 5 s):
+```powershell
+python -m logger.poller
+```
+
+**Window 3 — commands and checks:**
+```powershell
+python -m logger.set_limit 60        # curtail to 60 % -> logger shows THROTTLED, 60.0 kW
+python -m logger.set_limit off       # remove the limit
+python -m logger.set_limit 150       # invalid -> exception code 03
+python -m simulator.pv_model 2026-07-15   # print one full day from the physics model
+python -m pytest                     # run the unit tests
+```
+
+Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries with
+1 s, 2 s, 4 s … waits, and reconnects by itself when you start the server again.
+
+### SunSpec map of the simulator
+
+| Address | Model | Content |
+|---|---|---|
+| 40000–40001 | — | `SunS` marker |
+| 40002–40069 | 1 Common | Manufacturer `RES-Lab`, model `SIM-INV-100K`, SN `GR-ATH-0001` |
+| 40070–40121 | 103 Three-phase inverter | A, V, W, Hz, VA, VAr, PF, WH (32-bit), DC A/V/W, temperatures, state |
+| 40122–40147 | 123 Immediate controls | `WMaxLimPct` @ 40127, `WMaxLim_Ena` @ 40131 (writable) |
+| 40148–40153 | 64001 Vendor | Simulated clock (not standard SunSpec) |
+| 40154–40155 | — | `0xFFFF 0` end marker |
+
+## Time plan (8–10 h/week)
+
+| Step | Topic | Hours | Status |
 |---|---|---|---|
-| 0 | Environment setup (Python, venv, Git, GitHub repo) | 2–3 | 1 |
-| 1 | Modbus fundamentals: a 20-line server and client | 3–4 | 1 |
-| 2 | PV + inverter physics model | 4–5 | 1–2 |
-| 3 | SunSpec register map (models 1 and 103) | 4–5 | 2 |
-| 4 | Modbus TCP server exposing the simulated inverter | 3–4 | 2–3 |
-| 5 | Data logger: polling, decoding, error handling | 4–5 | 3 |
-| 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | 3–4 |
-| 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | 4 |
-| 8 | Docker Compose: whole system with one command | 3–4 | 4–5 |
-| 9 | Tests, final README, GitHub publish, CV line | 3–4 | 5 |
-| | **Total** | **~35–45 h** | |
+| 0 | Environment setup (Python, venv, Git, GitHub repo) | 2–3 | ✅ done |
+| 1 | Modbus fundamentals: a 20-line server and client | 3–4 | ✅ done |
+| 2 | PV + inverter physics model | 4–5 | 🔨 built → walkthrough |
+| 3 | SunSpec register map | 4–5 | 🔨 built → walkthrough |
+| 4 | Live Modbus TCP server | 3–4 | 🔨 built → walkthrough |
+| 5 | Data logger: polling, decoding, error handling | 4–5 | 🔨 built → walkthrough |
+| 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | hands-on |
+| 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | hands-on |
+| 8 | Docker Compose: whole system with one command | 3–4 | hands-on |
+| 9 | Final README, screenshots, GitHub, CV line | 3–4 | |
 
-## How each step works
-
-1. Claude explains the concept briefly (5–10 min of reading).
-2. Claude writes or updates the code in this folder.
-3. **You run it** on your PC and paste the output back.
-4. **Checkpoint:** you explain in your own words what the code does, and answer 1–2 questions.
-   Your answers go in `docs/learning-log.md`. This becomes your interview preparation.
-5. We tick the step below and commit to Git.
+**Approach (chosen 19 Oct 2026, option A):** Steps 2–5 were built in one go so the whole system
+can be seen working. Each file is then reviewed in its own session: explanation → a small change
+with a prediction → checkpoint questions. Steps 6–8 are built hands-on. Nothing goes on the CV
+until each file's checkpoints are passed.
 
 ## Progress tracker
 
-- [x] **Step 0 — Environment setup**
-  - [x] Python 3.14 installed (`python --version`)
-  - [x] Git installed (`git --version`)
-  - [x] VS Code installed with the Python extension
-  - [x] Virtual environment created and activated
-  - [x] `pymodbus` and `pytest` installed
-  - [x] GitHub repo created: https://github.com/stplato/inverter-modbus-logger
-  - [x] Checkpoint: *What is a virtual environment and why do we use one per project?*
-    → It isolates each project's packages so versions don't conflict; `requirements.txt` makes it reproducible.
-  - [x] Windows fix: disable the `python.exe` / `python3.exe` App execution aliases so `python` resolves to the venv
-  - [x] Git configured, repo initialised, first commit
-- [ ] **Step 1 — Modbus fundamentals**
-  - [ ] Minimal server holding 10 registers (`step1_modbus_basics/server.py`)
-  - [ ] Minimal client reading and writing them (`step1_modbus_basics/client.py`)
-  - [ ] Read the raw frames in `docs/step1-modbus-notes.md`
-  - [ ] Checkpoint: *What is the difference between a holding and an input register? What does function code 03 do?*
-- [ ] **Step 2 — PV + inverter model**
-  - [ ] Clear-sky irradiance curve for a site in Greece (sunrise → noon → sunset)
-  - [ ] DC power from irradiance and module temperature
-  - [ ] AC power through an inverter efficiency curve, with clipping at 100 kW
-  - [ ] Checkpoint: *Why does an inverter clip, and why does power drop when modules are hot?*
-- [ ] **Step 3 — SunSpec register map**
-  - [ ] Model 1 (Common: manufacturer, model, serial)
-  - [ ] Model 103 (Three-phase inverter: W, A, V, Hz, WH, temperature, status)
-  - [ ] Scale factors encoded correctly
-  - [ ] Checkpoint: *Why does SunSpec store `W = 12345` and `W_SF = -1` instead of 1234.5?*
-- [ ] **Step 4 — Simulator server**
-  - [ ] Registers update every second from the PV model
-  - [ ] Simulated clock (run one day in a few minutes for testing)
-- [ ] **Step 5 — Data logger**
-  - [ ] Poll every 5 s, decode with scale factors
-  - [ ] Handle timeouts and reconnect automatically
-  - [ ] Data quality flag (good / stale / comms-lost)
-- [ ] **Step 6 — PostgreSQL**
-  - [ ] Docker Desktop installed, PostgreSQL running in a container
-  - [ ] `schema.sql`: `devices`, `readings`, `alarms` tables
-  - [ ] Logger writes readings; first SQL queries (daily energy, peak power)
-- [ ] **Step 7 — Alarms + faults**
-  - [ ] Simulator can inject faults on command
-  - [ ] Logger raises and clears alarms, stores them with timestamps
-- [ ] **Step 8 — Docker Compose**
-  - [ ] `docker compose up` starts simulator, logger and database together
+- [x] **Step 0 — Environment setup** (venv, Git, GitHub: https://github.com/stplato/inverter-modbus-logger)
+  - Checkpoint: a venv isolates each project's packages; `requirements.txt` makes it reproducible.
+- [x] **Step 1 — Modbus fundamentals** (`step1_modbus_basics/`, notes in `docs/step1-modbus-notes.md`)
+  - Checkpoints passed: holding vs input registers, FC03, scaling, exception 02, unit ID errors.
+- [ ] **Step 0b — See the whole system run** (3 windows above, curtailment, comms loss)
+- [ ] **Walkthrough Step 2 — `simulator/pv_model.py`**
+  - [ ] Exercise: change `tilt` to 10° and 60°, predict and compare daily energy in July and December
+  - [ ] Checkpoint: *Why does the inverter clip in April but not in July, although July has more sun?*
+  - [ ] Checkpoint: *What is POA, and why is it higher than GHI on a tilted panel in winter?*
+  - [ ] Checkpoint: *What does a DC/AC ratio of 1.2 mean and why do designers choose it?*
+- [ ] **Walkthrough Step 3 — `common/sunspec.py` + `simulator/sunspec_map.py`**
+  - [ ] Exercise: change `W_SF` to 0 and run at noon — what breaks and why?
+  - [ ] Checkpoint: *Why is the energy counter (WH) 32-bit and split over two registers?*
+  - [ ] Checkpoint: *How does a SCADA find model 103 without knowing its address in advance?*
+- [ ] **Walkthrough Step 4 — `simulator/server.py`**
+  - [ ] Exercise: run with `--trace` and decode one FC03 request by hand
+  - [ ] Checkpoint: *Why does the server reject a write to the W register?*
+- [ ] **Walkthrough Step 5 — `logger/`**
+  - [ ] Exercise: stop the server for 30 s; look at the CSV — what do the COMMS_LOST rows mean for KPIs?
+  - [ ] Checkpoint: *Why read a whole model in one request instead of one register at a time?*
+  - [ ] Checkpoint: *What is exponential backoff and why not retry every 0.1 s?*
+- [ ] **Step 6 — PostgreSQL** (hands-on)
+- [ ] **Step 7 — Alarms + fault injection** (hands-on)
+- [ ] **Step 8 — Docker Compose** (hands-on)
 - [ ] **Step 9 — Finish and publish**
-  - [ ] Unit tests for decoder and PV model
-  - [ ] Final README with architecture diagram and screenshots
-  - [ ] Pushed to GitHub, CV "Projects" line written
 
 ## Troubleshooting notes
 
 - **`(.venv)` shows but `python` is the global one:** Windows' App execution alias
   (`AppData\Local\Microsoft\WindowsApps\python.exe`) wins over the venv. Check with
   `Get-Command python` and `python -c "import sys; print(sys.prefix)"`. Fix: Settings →
-  *Manage app execution aliases* → turn off `python.exe` and `python3.exe`. Fallback: run
-  `.\.venv\Scripts\python.exe` directly.
-
-## Step 1 — how to run
-
-Open **two** PowerShell windows in the project folder and activate the venv in both
-(`.\.venv\Scripts\Activate.ps1`).
-
-Window 1 (the device):
-```powershell
-python step1_modbus_basics/server.py
-```
-
-Window 2 (the SCADA):
-```powershell
-python step1_modbus_basics/client.py
-```
-
-Window 1 prints the raw bytes of every request and response. `docs/step1-modbus-notes.md`
-explains them byte by byte.
-
-> pymodbus 3.16 note: the old `ModbusSlaveContext`/`ModbusDeviceContext` datastore is deprecated.
-> This project uses the new `SimData` / `SimDevice` API so it keeps working with pymodbus 4.
+  *Manage app execution aliases* → turn off `python.exe` and `python3.exe`.
+- **`ModuleNotFoundError: No module named 'simulator'`:** run from the project folder and use
+  `python -m simulator.server` (with `-m` and dots), not `python simulator/server.py`.
+- **`Address already in use` / `WinError 10048`:** another server is still running on port 5020.
+  Close the other window, or use `--port 5021` on both server and logger.
+- **pymodbus 3.16:** the old `ModbusSlaveContext`/`ModbusDeviceContext` datastore is deprecated.
+  This project uses the new `SimData` / `SimDevice` API so it keeps working with pymodbus 4.
