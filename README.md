@@ -154,6 +154,7 @@ until each file's checkpoints are passed.
   - [ ] Exercise: stop the server for 30 s; look at the CSV — what do the COMMS_LOST rows mean for KPIs?
   - [ ] Checkpoint: *Why read a whole model in one request instead of one register at a time?*
   - [ ] Checkpoint: *What is exponential backoff and why not retry every 0.1 s?*
+  - [ ] Checkpoint: *The logger once showed E_logged = -90 kWh. Why, and how does the fix handle a counter reset?*
 - [ ] **Step 6 — PostgreSQL** (hands-on)
 - [ ] **Step 7 — Alarms + fault injection** (hands-on)
 - [ ] **Step 8 — Docker Compose** (hands-on)
