@@ -117,7 +117,7 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 |---|---|---|---|
 | 0 | Environment setup (Python, venv, Git, GitHub repo) | 2–3 | ✅ done |
 | 1 | Modbus fundamentals: a 20-line server and client | 3–4 | ✅ done |
-| 2 | PV + inverter physics model | 4–5 | 🔨 built → walkthrough |
+| 2 | PV + inverter physics model | 4–5 | ✅ walkthrough done |
 | 3 | SunSpec register map | 4–5 | 🔨 built → walkthrough |
 | 4 | Live Modbus TCP server | 3–4 | 🔨 built → walkthrough |
 | 5 | Data logger: polling, decoding, error handling | 4–5 | 🔨 built → walkthrough |
@@ -138,11 +138,11 @@ until each file's checkpoints are passed.
 - [x] **Step 1 — Modbus fundamentals** (`step1_modbus_basics/`, notes in `docs/step1-modbus-notes.md`)
   - Checkpoints passed: holding vs input registers, FC03, scaling, exception 02, unit ID errors.
 - [ ] **Step 0b — See the whole system run** (3 windows above, curtailment, comms loss)
-- [ ] **Walkthrough Step 2 — `simulator/pv_model.py`**
-  - [ ] Exercise: change `tilt` to 10° and 60°, predict and compare daily energy in July and December
-  - [ ] Checkpoint: *Why does the inverter clip in April but not in July, although July has more sun?*
-  - [ ] Checkpoint: *What is POA, and why is it higher than GHI on a tilted panel in winter?*
-  - [ ] Checkpoint: *What does a DC/AC ratio of 1.2 mean and why do designers choose it?*
+- [x] **Walkthrough Step 2 — `simulator/pv_model.py`**
+  - [x] Exercise: change `tilt` to 10° and 60°, predict and compare daily energy in July and December
+  - [x] Checkpoint: *Why does the inverter clip in April but not in July, although July has more sun?*
+  - [x] Checkpoint: *What is POA, and why is it higher than GHI on a tilted panel in winter?*
+  - [x] Checkpoint: *What does a DC/AC ratio of 1.2 mean and why do designers choose it?*
 - [ ] **Walkthrough Step 3 — `common/sunspec.py` + `simulator/sunspec_map.py`**
   - [ ] Exercise: change `W_SF` to 0 and run at noon — what breaks and why?
   - [ ] Checkpoint: *Why is the energy counter (WH) 32-bit and split over two registers?*

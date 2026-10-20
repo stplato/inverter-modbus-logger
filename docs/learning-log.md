@@ -52,3 +52,20 @@ Short answers in my own words, written after each checkpoint.
   Diffuse light doesn't gain from tilting, so the total gain is +65 %.
 - **Interview sentence:** "POA is irradiance on the module plane. In winter the sun is low, so tilt reduces the angle
   of incidence and POA is far above GHI. Performance KPIs like PR must be calculated with POA, not GHI."
+
+### Checkpoint 3 — Why oversize the DC side (DC/AC ratio 1.2)?
+
+| Day | Ratio 1.0 (100 kWp) | Ratio 1.2 (120 kWp) | Lost to clipping |
+|---|---|---|---|
+| 15 April | 666 kWh | 792 kWh | 6 kWh |
+| 15 July | 666 kWh | 799 kWh | 0 kWh |
+| 21 December | 402 kWh | 482 kWh | 0 kWh |
+
+- +20 % panels → **+19–20 % energy every day**, while clipping loses **<1 %**, and only at a few noon hours on cool bright days.
+- An inverter rated for 100 kW sits mostly at part load: in the morning, evening, winter and on cloudy days the panels
+  give far less than their peak. Extra panels fill those hours.
+- Panels are cheap; the inverter, transformer and **grid connection capacity (MW)** are expensive and limited.
+  Oversizing uses the expensive grid connection more hours per year.
+- Typical utility PV: DC/AC 1.2–1.4. With a battery, the "clipped" energy can be stored instead of lost.
+- **Interview sentence:** "Oversizing the DC side gives about 20 % more energy from the same inverter and grid connection,
+  for a clipping loss of around 1 %. The connection capacity is the scarce, expensive part, so you load it more hours per year."
