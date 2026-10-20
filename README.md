@@ -141,24 +141,29 @@ until each file's checkpoints are passed.
 - [x] **Step 1 — Modbus fundamentals** (`step1_modbus_basics/`, notes in `docs/step1-modbus-notes.md`)
   - Checkpoints passed: holding vs input registers, FC03, scaling, exception 02, unit ID errors.
 - [x] **Step 0b — See the whole system run** (3 windows above, curtailment, comms loss)
-- [x] **Walkthrough Step 2 — `simulator/pv_model.py`**
+- [x] **Walkthrough 1 (Step 2) — `simulator/pv_model.py`**
   - [x] Exercise: change `tilt` to 10° and 60°, predict and compare daily energy in July and December
   - [x] Checkpoint: *Why does the inverter clip in April but not in July, although July has more sun?*
   - [x] Checkpoint: *What is POA, and why is it higher than GHI on a tilted panel in winter?*
   - [x] Checkpoint: *What does a DC/AC ratio of 1.2 mean and why do designers choose it?*
-- [x] **Walkthrough Step 3 — `common/sunspec.py` + `simulator/sunspec_map.py`**
+- [x] **Walkthrough 2 (Step 3) — `common/sunspec.py` + `simulator/sunspec_map.py`**
   - [x] Exercise: change `W_SF` to 0 and run at noon — what breaks and why?
   - [x] Checkpoint: *Why is the energy counter (WH) 32-bit and split over two registers?*
   - [x] Checkpoint: *How does a SCADA find model 103 without knowing its address in advance?*
-- [x] **Walkthrough Step 4 — `simulator/server.py`**
+- [x] **Walkthrough 3 (Step 4) — `simulator/server.py`**
   - [x] Exercise: run with `--trace` and decode one FC03 request by hand
   - [x] Checkpoint: *Why does the server reject a write to the W register?*
-- [x] **Walkthrough Step 5 — `logger/`**
+- [x] **Walkthrough 4 (Step 5) — `logger/`**
   - [x] Exercise: stop the server for 30 s; look at the CSV — what do the COMMS_LOST rows mean for KPIs?
   - [x] Checkpoint: *Why read a whole model in one request instead of one register at a time?*
   - [x] Checkpoint: *What is exponential backoff and why not retry every 0.1 s?*
   - [x] Checkpoint: *The logger once showed E_logged = -90 kWh. Why, and how does the fix handle a counter reset?*
-- [ ] **Step 6 — PostgreSQL** (hands-on)
+- [ ] **Step 6 — PostgreSQL** (hands-on, ~5–6 h)
+  - [x] 6A: Docker Desktop installed, `docker compose up -d`, first SQL (CREATE / INSERT / SELECT / aggregates)
+  - [ ] 6B: design the tables (`devices`, `readings`, `alarms`) → `sql/schema.sql`
+    - [ ] Checkpoint: *Why does `readings` store only `device_id`, not the inverter's name and serial number?*
+  - [ ] 6C: logger writes every poll to PostgreSQL (`logger/db.py`, psycopg)
+  - [ ] 6D: KPI queries: daily energy, peak power, data availability
 - [ ] **Step 7 — Alarms + fault injection** (hands-on)
 - [ ] **Step 8 — Docker Compose** (hands-on)
 - [ ] **Step 9 — Finish and publish**
