@@ -122,7 +122,7 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 | 1 | Modbus fundamentals: a 20-line server and client | 3–4 | ✅ done |
 | 2 | PV + inverter physics model | 4–5 | ✅ walkthrough done |
 | 3 | SunSpec register map | 4–5 | ✅ walkthrough done |
-| 4 | Live Modbus TCP server | 3–4 | 🔨 built → walkthrough |
+| 4 | Live Modbus TCP server | 3–4 | ✅ walkthrough done |
 | 5 | Data logger: polling, decoding, error handling | 4–5 | 🔨 built → walkthrough |
 | 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | hands-on |
 | 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | hands-on |
@@ -150,9 +150,9 @@ until each file's checkpoints are passed.
   - [x] Exercise: change `W_SF` to 0 and run at noon — what breaks and why?
   - [x] Checkpoint: *Why is the energy counter (WH) 32-bit and split over two registers?*
   - [x] Checkpoint: *How does a SCADA find model 103 without knowing its address in advance?*
-- [ ] **Walkthrough Step 4 — `simulator/server.py`**
-  - [ ] Exercise: run with `--trace` and decode one FC03 request by hand
-  - [ ] Checkpoint: *Why does the server reject a write to the W register?*
+- [x] **Walkthrough Step 4 — `simulator/server.py`**
+  - [x] Exercise: run with `--trace` and decode one FC03 request by hand
+  - [x] Checkpoint: *Why does the server reject a write to the W register?*
 - [ ] **Walkthrough Step 5 — `logger/`**
   - [ ] Exercise: stop the server for 30 s; look at the CSV — what do the COMMS_LOST rows mean for KPIs?
   - [ ] Checkpoint: *Why read a whole model in one request instead of one register at a time?*

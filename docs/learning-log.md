@@ -97,3 +97,25 @@ Short answers in my own words, written after each checkpoint.
 - Different brands put models in different places; discovery lets one driver work for all.
 - **Interview sentence:** "SunSpec devices start with a 'SunS' marker at 40000, followed by a chain of models, each beginning
   with its ID and length. The SCADA walks the chain (address + 2 + L), so one driver works across manufacturers."
+
+## Walkthrough 3 — Live server (`simulator/server.py`) + probe tool
+
+### Decoding real frames (`python -m logger.probe read 40070 2`)
+```
+SENT      00 01 | 00 00 | 00 06 | 01 | 03 | 9c 86 | 00 02
+          trans.  proto.  length  dev  FC03  start   count
+RECEIVED  00 01 00 00 00 07 01 | 03 | 04 | 00 67 | 00 32
+                                 FC   bytes  103     50
+```
+- Two bytes form ONE 16-bit number: 0x9C86 = 156 × 256 + 134 = **40070** (start address). Calculator → Programmer mode.
+- 0x0067 = **103** = model ID; 0x0032 = **50** = model length L → the [ID][L] header on the wire.
+- W @ 40084 (= 40070 + 2 + 12): `[2666, 1]` → 2666 × 10¹ = **26,660 W = 26.66 kW** (value depends on the simulated time).
+
+### Why the inverter refuses `write 40084 5000` → exception 02
+- 5000 is the **value**, 40084 is the **address**; the address exists (we just read it).
+- 40084 is a **measurement** (AC power). Measurements come from physics; nobody can "write" what the inverter produces.
+  Only **setpoints/commands** are writable (here: model 123 Conn, WMaxLimPct, WMaxLim_Ena).
+- The server answers **exception 02** (address not writable); other vendors may answer 01 or 03 — check the manual.
+- Security/safety: a device that accepted random writes could be damaged or mis-reported. Read-only measurements protect data integrity.
+- **Interview sentence:** "Measurement registers are read-only; only control registers like the active-power limit accept
+  writes. Writing a measurement returns an exception, typically 02 Illegal Data Address."
