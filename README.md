@@ -63,6 +63,7 @@ in a database.
 ├── logger/                    ← THE SCADA
 │   ├── decoder.py             ← Step 5: discover models, read blocks, apply scale factors
 │   ├── poller.py              ← Step 5: poll loop, CSV storage, COMMS_LOST + reconnect
+│   ├── db.py                  ← Step 6C: PostgreSQL historian, store-and-forward buffer
 │   ├── set_limit.py           ← Step 5: send a curtailment command (model 123)
 │   └── probe.py               ← "Modbus Poll" tool: send ONE read/write and see the bytes
 ├── tests/                     ← pytest unit tests (12 tests)
@@ -70,7 +71,7 @@ in a database.
 └── docs/                      ← notes and learning log
 ```
 
-Coming in Steps 6–8: `sql/schema.sql`, `logger/db.py`, `logger/alarms.py`, `docker-compose.yml`.
+Coming in Steps 6–10: `sql/schema.sql`, `logger/db.py`, `logger/alarms.py`, full `docker-compose.yml`, `grafana/` dashboards.
 
 ## How to run the whole system
 
@@ -84,7 +85,12 @@ python -m simulator.server --start "2026-04-15 10:00" --speed 120    # spring da
 python -m simulator.server --weather cloudy                          # passing clouds
 ```
 
-**Window 2 — the SCADA logger** (one line + one CSV row every 5 s):
+**Before starting:** the database must be running (Step 6):
+```powershell
+docker compose up -d
+```
+
+**Window 2 — the SCADA logger** (one line every 5 s → PostgreSQL + CSV backup):
 ```powershell
 python -m logger.poller
 ```
@@ -127,7 +133,8 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 | 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | hands-on |
 | 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | hands-on |
 | 8 | Docker Compose: whole system with one command | 3–4 | hands-on |
-| 9 | Final README, screenshots, GitHub, CV line | 3–4 | |
+| 10 | **Grafana dashboard** on the PostgreSQL historian (done before Step 9) | 4–6 | hands-on |
+| 9 | Final README with dashboard screenshots, GitHub public, CV line | 3–4 | last |
 
 **Approach (chosen 19 Oct 2026, option A):** Steps 2–5 were built in one go so the whole system
 can be seen working. Each file is then reviewed in its own session: explanation → a small change
@@ -160,13 +167,21 @@ until each file's checkpoints are passed.
   - [x] Checkpoint: *The logger once showed E_logged = -90 kWh. Why, and how does the fix handle a counter reset?*
 - [ ] **Step 6 — PostgreSQL** (hands-on, ~5–6 h)
   - [x] 6A: Docker Desktop installed, `docker compose up -d`, first SQL (CREATE / INSERT / SELECT / aggregates)
-  - [ ] 6B: design the tables (`devices`, `readings`, `alarms`) → `sql/schema.sql`
-    - [ ] Checkpoint: *Why does `readings` store only `device_id`, not the inverter's name and serial number?*
+  - [x] 6B: design the tables (`devices`, `readings`, `alarms`) → `sql/schema.sql`
+    - [x] Checkpoint: *Why does `readings` store only `device_id`, not the inverter's name and serial number?*
   - [ ] 6C: logger writes every poll to PostgreSQL (`logger/db.py`, psycopg)
   - [ ] 6D: KPI queries: daily energy, peak power, data availability
 - [ ] **Step 7 — Alarms + fault injection** (hands-on)
 - [ ] **Step 8 — Docker Compose** (hands-on)
-- [ ] **Step 9 — Finish and publish**
+- [ ] **Step 10 — Grafana dashboard** (hands-on, ~4–6 h; done before Step 9)
+  - [ ] Grafana container in `docker-compose.yml`, PostgreSQL data source provisioned automatically
+  - [ ] Panels: AC power / DC voltage / temperature over the day, inverter state (MPPT / THROTTLED / SLEEPING)
+  - [ ] KPI cards: energy today, peak power, data availability %
+  - [ ] Alarm table (from Step 7); clipping and curtailment visible on the power curve
+  - [ ] Dashboard saved as JSON in `grafana/` so it's version-controlled
+- [ ] **Step 9 — Finish and publish** (last)
+  - [ ] README with architecture diagram and dashboard screenshots
+  - [ ] Repo switched to public, CV "Projects" line written
 
 ## Troubleshooting notes
 

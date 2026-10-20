@@ -119,3 +119,59 @@ RECEIVED  00 01 00 00 00 07 01 | 03 | 04 | 00 67 | 00 32
 - Security/safety: a device that accepted random writes could be damaged or mis-reported. Read-only measurements protect data integrity.
 - **Interview sentence:** "Measurement registers are read-only; only control registers like the active-power limit accept
   writes. Writing a measurement returns an exception, typically 02 Illegal Data Address."
+
+## Walkthrough 4 — The logger (`logger/decoder.py` + `logger/poller.py`)
+
+### Exercise: 45 s comms failure (20 Oct, 13:37:26 → 13:38:11)
+- CSV: **243 GOOD / 23 COMMS_LOST** → data availability 243/266 = **91.4 %**.
+- After reconnect: re-discovery + "energy counter went BACKWARDS" (our server restart = inverter restart).
+
+### Checkpoint 1 — Is COMMS_LOST plant downtime?
+| | Real comms loss (cable, router) | Device restart / replacement |
+|---|---|---|
+| Inverter producing? | yes | no |
+| Energy counter | keeps rising | goes backwards / resets |
+| Logger | adds the jump after reconnect | ignores the backwards jump, warns |
+| Plant availability | **not** downtime | **is** downtime |
+- **Interview sentence:** "A comms loss isn't plant downtime. The inverter keeps producing and its energy counter keeps counting,
+  so after reconnect the counter delta recovers the energy. That's why energy is calculated from counters, not from power
+  samples. Data availability and plant availability are separate KPIs."
+
+### Checkpoint 2 — Why read a whole model in one block?
+1. **Consistent snapshot:** all values (and their scale factors) from the same instant. If W and W_SF are read separately and the
+   inverter changes SF in between → 10× errors.
+2. **Speed:** each request has fixed overhead. 100 inverters on one RS485 line: ~2.5 min/cycle with single reads vs ~5 s with block reads.
+   FC03 max = 125 registers per request.
+- **Interview sentence:** "Block reads give a consistent snapshot, so values and their scale factors always match, and they're much
+  faster because each request has fixed overhead."
+
+### Checkpoint 3 — Why exponential backoff (1 → 2 → 4 → … → 30 s)?
+- Fast retries every 0.1 s × 100 inverters = **1,000 failed attempts/s**: floods the network, gateway, SCADA CPU and logs, for nothing.
+- When the switch comes back, 100 clients hammering at once (**"thundering herd"**) can overload a gateway or a device still booting.
+- Backoff = quick retry for short glitches (1 s, 2 s), patient for long outages, **capped** (30 s) so recovery is noticed fast.
+  Real systems also add a little random **jitter** so clients don't retry in sync.
+- **Interview sentence:** "Exponential backoff retries quickly after a short glitch but slows down during a long outage, so the SCADA
+  doesn't flood the network or overload devices when they come back. A cap keeps recovery time short."
+
+## Step 6B — Database design (`sql/schema.sql`)
+
+### Why `readings` stores only `device_id` (normalization)
+- 1 inverter × 1 reading / 5 s ≈ **6.3 million rows per year**.
+- Repeating "RES-Lab SIM-INV-100K GR-ATH-0001" (~30 bytes) in every row ≈ 190 MB/year of duplicate text; an integer id ≈ 25 MB.
+- Inverter replaced → design A: change millions of rows (and risk inconsistency); design B: one row in `devices`.
+  Better still: the replacement gets a **new device row**, so history shows which unit produced what (warranty).
+- **Interview sentence:** "The readings table stores only a device_id foreign key; device details live once in a devices
+  table. That saves space on millions of time-series rows and means a change like an inverter replacement is made in one
+  place, so the data stays consistent."
+
+### Constraints = the database guards its own data quality (all tested 20 Oct)
+| Constraint | Rule | What it rejected |
+|---|---|---|
+| `UNIQUE (serial_number)` | one row per physical inverter | the same inverter registered twice |
+| `FOREIGN KEY device_id → devices` | a reading must belong to a known device | a reading for device 99 |
+| `CHECK (quality IN ('GOOD','COMMS_LOST'))` | only valid quality flags | quality = 'BROKEN' |
+| `PRIMARY KEY (device_id, time)` | one reading per device per instant | duplicate readings |
+
+- Data types: `real` for measurements, `numeric(14,3)` for energy counters (exact), `timestamptz` for time.
+- **Interview sentence:** "I let the database enforce data quality with constraints — unique serials, foreign keys and
+  check constraints — so bad data is rejected at the door instead of being cleaned up later."

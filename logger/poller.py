@@ -1,13 +1,16 @@
-"""Step 5 - The data logger: a tiny SCADA poller.
+"""Step 5 + 6C - The data logger: a tiny SCADA poller.
 
 Every --interval seconds it reads the inverter's SunSpec model 103, decodes it,
-prints one line and appends one row to a CSV file in data/.
+prints one line, writes one row to PostgreSQL (Step 6C) and one row to a CSV
+backup file in data/.
 If the inverter stops answering it marks the data COMMS_LOST and keeps
 trying to reconnect (1 s, 2 s, 4 s ... up to 30 s between attempts).
+If the DATABASE is down, readings are buffered in memory and written later.
 
-Start the simulator first, then from the project folder:
+Start the database and the simulator first, then from the project folder:
     python -m logger.poller
     python -m logger.poller --interval 2
+    python -m logger.poller --no-db          (CSV only, like Step 5)
 """
 
 from __future__ import annotations
@@ -16,13 +19,14 @@ import argparse
 import csv
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pymodbus.client import ModbusTcpClient
 
 from common.sunspec import COMMON, CONTROLS, INVERTER_3PH, SIM_CLOCK, STATE_NAMES
 from logger.decoder import ModbusReadError, decode_model, discover, read_model
+from logger.db import DEFAULT_DSN, Historian
 
 CSV_FIELDS = ["time_device", "time_logger", "quality", "state", "ac_kw", "dc_kw", "dc_v",
               "dc_a", "v_phase_a", "hz", "pf_pct", "energy_kwh", "t_heatsink_c",
@@ -30,11 +34,18 @@ CSV_FIELDS = ["time_device", "time_logger", "quality", "state", "ac_kw", "dc_kw"
 
 
 class Poller:
-    def __init__(self, host: str, port: int, device_id: int, csv_dir: Path):
+    def __init__(self, host: str, port: int, device_id: int, csv_dir: Path,
+                 historian: Historian | None = None):
         self.client = ModbusTcpClient(host, port=port, timeout=2, retries=0)
-        self.host, self.port, self.device_id = host, port, device_id
+        self.host, self.port, self.device_id = host, port, device_id   # device_id = Modbus unit id
         self.models: dict[int, tuple[int, int]] = {}
         self.csv_dir = csv_dir
+        self.historian = historian
+        self.identity: dict | None = None     # model 1: manufacturer, model, serial, firmware
+        self.db_device_id: int | None = None  # devices.device_id in PostgreSQL
+        self.last_dev_time: datetime | None = None   # to estimate time during COMMS_LOST
+        self.last_dev_mono = 0.0
+        self.speed = 1
         self.last_wh: float | None = None   # last energy counter value we saw
         self.logged_wh = 0.0                # energy measured while this logger ran
         self.backoff = 1.0
@@ -61,11 +72,26 @@ class Poller:
     def print_identity(self) -> None:
         start, length = self.models[COMMON.id]
         ident = decode_model(COMMON, read_model(self.client, start, length, self.device_id))
+        self.identity = ident
         names = ", ".join(f"{mid} @ {addr}" for mid, (addr, _) in self.models.items())
         print(f"Connected: {ident['Mn']} {ident['Md']}  SN {ident['SN']}  fw {ident['Vr']}")
-        print(f"SunSpec models found: {names}\n")
+        print(f"SunSpec models found: {names}")
+        self.register_device()
+        print()
         print(f"{'device time':16}  {'state':9} {'P_ac kW':>8} {'P_dc kW':>8} {'V_dc':>6} "
               f"{'Hz':>6} {'T_snk':>6} {'E_logged kWh':>12}  limit")
+
+    def register_device(self) -> None:
+        """Make sure this inverter has a row in the devices table (matched by serial)."""
+        if self.historian is None or self.identity is None or self.db_device_id is not None:
+            return
+        ident = self.identity
+        self.db_device_id = self.historian.register_device(
+            name=f"INV-{self.device_id:02d}", manufacturer=ident["Mn"], model=ident["Md"],
+            serial=ident["SN"], firmware=ident["Vr"], host=self.host, port=self.port,
+            unit_id=self.device_id)
+        if self.db_device_id is not None:
+            print(f"Database: {ident['SN']} is device_id {self.db_device_id}")
 
     # --- one poll ---------------------------------------------------------
     def read_once(self) -> dict:
@@ -79,8 +105,10 @@ class Poller:
 
         if clock.get("SimTime"):
             t_dev = datetime.fromtimestamp(clock["SimTime"], tz=timezone.utc).replace(tzinfo=None)
+            self.speed = clock.get("Speed") or 1
         else:
             t_dev = datetime.now()
+        self.last_dev_time, self.last_dev_mono = t_dev, time.monotonic()
 
         # Energy = sum of counter INCREASES. If the counter goes backwards the device
         # was reset or replaced: a real SCADA must not book negative energy.
@@ -108,22 +136,30 @@ class Poller:
             "t_heatsink_c": inv["TmpSnk"],
             "t_cabinet_c": inv["TmpCab"],
             "limit_pct": ctl.get("WMaxLimPct"),
-            "limit_enabled": ctl.get("WMaxLim_Ena"),
+            "limit_enabled": bool(ctl.get("WMaxLim_Ena")),
             "_e_logged": self.logged_wh / 1000,
         }
 
+    def comms_lost_row(self) -> dict:
+        """A COMMS_LOST row. The device time is unknown, so estimate it from the last
+        good reading: last device time + real seconds passed x clock speed."""
+        row = {"time_logger": datetime.now().isoformat(timespec="seconds"), "quality": "COMMS_LOST"}
+        if self.last_dev_time is not None:
+            elapsed = (time.monotonic() - self.last_dev_mono) * self.speed
+            row["time_device"] = (self.last_dev_time + timedelta(seconds=elapsed)).isoformat(
+                timespec="seconds")
+        return row
+
     def poll(self) -> None:
         if not self.client.connected and not self.connect():
-            self.save({"time_logger": datetime.now().isoformat(timespec="seconds"),
-                       "quality": "COMMS_LOST"})
+            self.save(self.comms_lost_row())
             return
         try:
             row = self.read_once()
         except (ModbusReadError, Exception) as exc:      # timeout, socket closed, ...
             print(f"  ! read failed ({type(exc).__name__}): marking COMMS_LOST")
             self.client.close()
-            self.save({"time_logger": datetime.now().isoformat(timespec="seconds"),
-                       "quality": "COMMS_LOST"})
+            self.save(self.comms_lost_row())
             return
         limit = f"{row['limit_pct']:.0f}%" if row["limit_enabled"] else "off"
         print(f"{row['time_device'][:16].replace('T', ' ')}  {row['state']:9} "
@@ -131,8 +167,13 @@ class Poller:
               f"{row['hz']:6.2f} {row['t_heatsink_c']:6.1f} {row['_e_logged']:12.1f}  {limit}")
         self.save(row)
 
-    # --- storage (CSV for now; PostgreSQL in Step 6) ------------------------
+    # --- storage: PostgreSQL (main) + CSV (local backup) ----------------------
     def save(self, row: dict) -> None:
+        if self.historian is not None:
+            self.register_device()                    # in case the DB was down at connect
+            if self.db_device_id is not None and row.get("time_device"):
+                self.historian.store(self.db_device_id,
+                                     datetime.fromisoformat(row["time_device"]), row)
         self.csv_dir.mkdir(parents=True, exist_ok=True)
         path = self.csv_dir / f"readings_{datetime.now():%Y%m%d}.csv"
         new_file = not path.exists()
@@ -150,12 +191,16 @@ def main() -> None:
     ap.add_argument("--device-id", type=int, default=1)
     ap.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
     ap.add_argument("--csv-dir", default="data")
+    ap.add_argument("--db", default=DEFAULT_DSN, help="PostgreSQL connection string")
+    ap.add_argument("--no-db", action="store_true", help="CSV only (no database)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.CRITICAL)      # we report errors ourselves
-    poller = Poller(args.host, args.port, args.device_id, Path(args.csv_dir))
+    historian = None if args.no_db else Historian(args.db)
+    poller = Poller(args.host, args.port, args.device_id, Path(args.csv_dir), historian)
+    target = "CSV only" if historian is None else "PostgreSQL + CSV backup"
     print(f"Logger polling {args.host}:{args.port} every {args.interval:g} s "
-          f"-> {args.csv_dir}/  (Ctrl + C to stop)")
+          f"-> {target}  (Ctrl + C to stop)")
     try:
         while True:
             started = time.monotonic()
@@ -163,6 +208,8 @@ def main() -> None:
             time.sleep(max(0.0, args.interval - (time.monotonic() - started)))
     except KeyboardInterrupt:
         poller.client.close()
+        if historian is not None:
+            historian.close()
         print("\nLogger stopped.")
 
 
