@@ -1,0 +1,31 @@
+# Step 6 - PostgreSQL database (the "historian") running in Docker.
+# Step 8 will add the simulator and the logger here too.
+#
+#   docker compose up -d        start in the background
+#   docker compose ps           is it running?
+#   docker compose logs db      see its log
+#   docker compose down         stop (data is KEPT in the volume)
+#   docker compose down -v      stop AND delete all data
+
+services:
+  db:
+    image: postgres:16
+    container_name: pv-historian
+    environment:
+      POSTGRES_USER: solar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-solar_dev}   # dev-only default; override in a .env file
+      POSTGRES_DB: scada
+      TZ: Europe/Athens
+    ports:
+      - "5433:5432"        # your PC port 5433 -> container port 5432 (5433 avoids clashing with any local PostgreSQL)
+    volumes:
+      - pgdata:/var/lib/postgresql/data     # database files survive container restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U solar -d scada"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

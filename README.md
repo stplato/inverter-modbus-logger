@@ -123,7 +123,7 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 | 2 | PV + inverter physics model | 4–5 | ✅ walkthrough done |
 | 3 | SunSpec register map | 4–5 | ✅ walkthrough done |
 | 4 | Live Modbus TCP server | 3–4 | ✅ walkthrough done |
-| 5 | Data logger: polling, decoding, error handling | 4–5 | 🔨 built → walkthrough |
+| 5 | Data logger: polling, decoding, error handling | 4–5 | ✅ walkthrough done |
 | 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | hands-on |
 | 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | hands-on |
 | 8 | Docker Compose: whole system with one command | 3–4 | hands-on |
@@ -140,7 +140,7 @@ until each file's checkpoints are passed.
   - Checkpoint: a venv isolates each project's packages; `requirements.txt` makes it reproducible.
 - [x] **Step 1 — Modbus fundamentals** (`step1_modbus_basics/`, notes in `docs/step1-modbus-notes.md`)
   - Checkpoints passed: holding vs input registers, FC03, scaling, exception 02, unit ID errors.
-- [ ] **Step 0b — See the whole system run** (3 windows above, curtailment, comms loss)
+- [x] **Step 0b — See the whole system run** (3 windows above, curtailment, comms loss)
 - [x] **Walkthrough Step 2 — `simulator/pv_model.py`**
   - [x] Exercise: change `tilt` to 10° and 60°, predict and compare daily energy in July and December
   - [x] Checkpoint: *Why does the inverter clip in April but not in July, although July has more sun?*
@@ -153,11 +153,11 @@ until each file's checkpoints are passed.
 - [x] **Walkthrough Step 4 — `simulator/server.py`**
   - [x] Exercise: run with `--trace` and decode one FC03 request by hand
   - [x] Checkpoint: *Why does the server reject a write to the W register?*
-- [ ] **Walkthrough Step 5 — `logger/`**
-  - [ ] Exercise: stop the server for 30 s; look at the CSV — what do the COMMS_LOST rows mean for KPIs?
-  - [ ] Checkpoint: *Why read a whole model in one request instead of one register at a time?*
-  - [ ] Checkpoint: *What is exponential backoff and why not retry every 0.1 s?*
-  - [ ] Checkpoint: *The logger once showed E_logged = -90 kWh. Why, and how does the fix handle a counter reset?*
+- [x] **Walkthrough Step 5 — `logger/`**
+  - [x] Exercise: stop the server for 30 s; look at the CSV — what do the COMMS_LOST rows mean for KPIs?
+  - [x] Checkpoint: *Why read a whole model in one request instead of one register at a time?*
+  - [x] Checkpoint: *What is exponential backoff and why not retry every 0.1 s?*
+  - [x] Checkpoint: *The logger once showed E_logged = -90 kWh. Why, and how does the fix handle a counter reset?*
 - [ ] **Step 6 — PostgreSQL** (hands-on)
 - [ ] **Step 7 — Alarms + fault injection** (hands-on)
 - [ ] **Step 8 — Docker Compose** (hands-on)
