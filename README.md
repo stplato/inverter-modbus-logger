@@ -63,7 +63,8 @@ in a database.
 ├── logger/                    ← THE SCADA
 │   ├── decoder.py             ← Step 5: discover models, read blocks, apply scale factors
 │   ├── poller.py              ← Step 5: poll loop, CSV storage, COMMS_LOST + reconnect
-│   └── set_limit.py           ← Step 5: send a curtailment command (model 123)
+│   ├── set_limit.py           ← Step 5: send a curtailment command (model 123)
+│   └── probe.py               ← "Modbus Poll" tool: send ONE read/write and see the bytes
 ├── tests/                     ← pytest unit tests (12 tests)
 ├── data/                      ← CSV output of the logger (not in Git)
 └── docs/                      ← notes and learning log
@@ -95,6 +96,8 @@ python -m logger.set_limit off       # remove the limit
 python -m logger.set_limit 150       # invalid -> exception code 03
 python -m simulator.pv_model 2026-07-15   # print one full day from the physics model
 python -m pytest                     # run the unit tests
+python -m logger.probe read 40070 2  # one FC03 request, raw bytes shown
+python -m logger.probe write 40084 5000   # try to write a read-only register
 ```
 
 Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries with
@@ -118,7 +121,7 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 | 0 | Environment setup (Python, venv, Git, GitHub repo) | 2–3 | ✅ done |
 | 1 | Modbus fundamentals: a 20-line server and client | 3–4 | ✅ done |
 | 2 | PV + inverter physics model | 4–5 | ✅ walkthrough done |
-| 3 | SunSpec register map | 4–5 | 🔨 built → walkthrough |
+| 3 | SunSpec register map | 4–5 | ✅ walkthrough done |
 | 4 | Live Modbus TCP server | 3–4 | 🔨 built → walkthrough |
 | 5 | Data logger: polling, decoding, error handling | 4–5 | 🔨 built → walkthrough |
 | 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | hands-on |
@@ -143,10 +146,10 @@ until each file's checkpoints are passed.
   - [x] Checkpoint: *Why does the inverter clip in April but not in July, although July has more sun?*
   - [x] Checkpoint: *What is POA, and why is it higher than GHI on a tilted panel in winter?*
   - [x] Checkpoint: *What does a DC/AC ratio of 1.2 mean and why do designers choose it?*
-- [ ] **Walkthrough Step 3 — `common/sunspec.py` + `simulator/sunspec_map.py`**
-  - [ ] Exercise: change `W_SF` to 0 and run at noon — what breaks and why?
-  - [ ] Checkpoint: *Why is the energy counter (WH) 32-bit and split over two registers?*
-  - [ ] Checkpoint: *How does a SCADA find model 103 without knowing its address in advance?*
+- [x] **Walkthrough Step 3 — `common/sunspec.py` + `simulator/sunspec_map.py`**
+  - [x] Exercise: change `W_SF` to 0 and run at noon — what breaks and why?
+  - [x] Checkpoint: *Why is the energy counter (WH) 32-bit and split over two registers?*
+  - [x] Checkpoint: *How does a SCADA find model 103 without knowing its address in advance?*
 - [ ] **Walkthrough Step 4 — `simulator/server.py`**
   - [ ] Exercise: run with `--trace` and decode one FC03 request by hand
   - [ ] Checkpoint: *Why does the server reject a write to the W register?*

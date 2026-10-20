@@ -69,3 +69,31 @@ Short answers in my own words, written after each checkpoint.
 - Typical utility PV: DC/AC 1.2–1.4. With a battery, the "clipped" energy can be stored instead of lost.
 - **Interview sentence:** "Oversizing the DC side gives about 20 % more energy from the same inverter and grid connection,
   for a clipping loss of around 1 %. The connection capacity is the scarce, expensive part, so you load it more hours per year."
+
+## Walkthrough 2 — SunSpec register map
+
+### Exercise: `W_SF = 0` (scale factor broken on purpose)
+- With W_SF = 0, power is sent in whole watts in one int16 register (max **32,767**).
+- At **32,782 W** (08:36) our firmware refused: `ValueError: 32782 does not fit in int16` → server crashed →
+  SCADA saw **COMMS_LOST** with backoff 1-2-4-8-16-30 s.
+- A real firmware without the check **wraps around**: 32,782 → 0x800E → read as int16 = **−32,754 W** (negative power at noon!).
+- **Field rule:** negative power at midday, or jumps of ~65.5 kW (65,536) → suspect 16-bit overflow:
+  wrong scale factor or wrong data type (int16/uint16) in the SCADA mapping.
+- Our firmware uses W_SF = 1 (10 W steps) → 100 kW = 10,000, far below 32,767.
+- Read Python errors **bottom-up**: the last line is the cause.
+
+### Checkpoint 1 — Why is WH 32-bit over two registers?
+- One register max = 65,535 Wh = 65.5 kWh → a 100 kW plant would wrap to 0 in ~40 minutes.
+- Two registers (32-bit) max = 4,295 MWh. Value = **high word × 65,536 + low word**
+  (152,340,000 = 2324 × 65,536 + 34,336).
+- Field trap: **word order** — some vendors send the low word first. SunSpec fixes high word first.
+- **Interview sentence:** "Lifetime energy counters exceed the 65,535 limit of a 16-bit register within an hour, so they
+  use 32 bits across two registers: value = high × 65,536 + low. You must check the word order in the register map."
+
+### Checkpoint 2 — How does the SCADA find model 103 without knowing its address?
+- **Discovery:** check `SunS` at 40000, then walk the chain. Each model starts with **[ID][L]**;
+  next model address = **current + 2 + L**, until ID = 0xFFFF.
+- Ours: 1 @ 40002 (L=66) → 103 @ 40070 (L=50) → 123 @ 40122 (L=24) → 64001 @ 40148 (L=4) → end @ 40154.
+- Different brands put models in different places; discovery lets one driver work for all.
+- **Interview sentence:** "SunSpec devices start with a 'SunS' marker at 40000, followed by a chain of models, each beginning
+  with its ID and length. The SCADA walks the chain (address + 2 + L), so one driver works across manufacturers."
