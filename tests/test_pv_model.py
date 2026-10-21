@@ -44,3 +44,37 @@ def test_energy_counter_only_goes_up():
         inv.step(datetime(2026, 7, 15, h, 0))
     assert inv.energy_wh > start
     assert inv.step(datetime(2026, 7, 15, 12, 0)).state in (ST_MPPT, ST_THROTTLED)
+
+
+# --- Step 7: faults --------------------------------------------------------------
+
+from datetime import timedelta
+
+from common.sunspec import decode_events
+from simulator.pv_model import ST_FAULT, ST_STARTING
+
+
+def _run(inv, start, minutes, inject_at=None, kind=None):
+    states, t = [], start
+    for i in range(minutes):
+        if i == inject_at:
+            inv.inject(kind, t)
+        s = inv.step(t)
+        states.append(s)
+        t += timedelta(minutes=1)
+    return states
+
+
+def test_grid_trip_disconnects_waits_then_ramps():
+    s = _run(Inverter(seed=1), datetime(2026, 4, 15, 12, 0), 25, inject_at=2, kind="grid_trip")
+    assert s[2].state == ST_FAULT and s[2].ac_w == 0
+    assert decode_events(s[2].events) == ["GRID_DISCONNECT", "OVER_FREQUENCY"]
+    assert s[5].state == ST_STARTING                 # reconnect delay
+    assert 0 < s[6].ac_w < 20_000                    # ramp starts low ...
+    assert s[20].ac_w == 100_000                     # ... and reaches full power
+
+
+def test_fan_failure_derates_power():
+    s = _run(Inverter(seed=1), datetime(2026, 4, 15, 12, 0), 60, inject_at=0, kind="fan_failure")
+    assert s[-1].t_heatsink > 69                     # hot heatsink
+    assert s[-1].ac_w < 95_000                       # derated below the 100 kW clipping level

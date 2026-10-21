@@ -24,7 +24,7 @@ from pathlib import Path
 
 from pymodbus.client import ModbusTcpClient
 
-from common.sunspec import COMMON, CONTROLS, INVERTER_3PH, SIM_CLOCK, STATE_NAMES
+from common.sunspec import COMMON, CONTROLS, INVERTER_3PH, SIM_CLOCK, STATE_NAMES, decode_events
 from logger.decoder import ModbusReadError, decode_model, discover, read_model
 from logger.db import DEFAULT_DSN, Historian
 
@@ -79,7 +79,7 @@ class Poller:
         self.register_device()
         print()
         print(f"{'device time':16}  {'state':9} {'P_ac kW':>8} {'P_dc kW':>8} {'V_dc':>6} "
-              f"{'Hz':>6} {'T_snk':>6} {'E_logged kWh':>12}  limit")
+              f"{'Hz':>6} {'T_snk':>6} {'E_logged kWh':>12}  limit  events")
 
     def register_device(self) -> None:
         """Make sure this inverter has a row in the devices table (matched by serial)."""
@@ -137,6 +137,7 @@ class Poller:
             "t_cabinet_c": inv["TmpCab"],
             "limit_pct": ctl.get("WMaxLimPct"),
             "limit_enabled": bool(ctl.get("WMaxLim_Ena")),
+            "events": decode_events(inv["Evt1"]),           # Step 7: inverter's own event flags
             "_e_logged": self.logged_wh / 1000,
         }
 
@@ -164,7 +165,8 @@ class Poller:
         limit = f"{row['limit_pct']:.0f}%" if row["limit_enabled"] else "off"
         print(f"{row['time_device'][:16].replace('T', ' ')}  {row['state']:9} "
               f"{row['ac_kw']:8.1f} {row['dc_kw']:8.1f} {row['dc_v']:6.1f} "
-              f"{row['hz']:6.2f} {row['t_heatsink_c']:6.1f} {row['_e_logged']:12.1f}  {limit}")
+              f"{row['hz']:6.2f} {row['t_heatsink_c']:6.1f} {row['_e_logged']:12.1f}  {limit:>5}"
+              f"  {','.join(row['events'])}")
         self.save(row)
 
     # --- storage: PostgreSQL (main) + CSV (local backup) ----------------------

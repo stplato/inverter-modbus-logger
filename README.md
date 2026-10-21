@@ -100,6 +100,9 @@ python -m logger.poller
 python -m logger.set_limit 60        # curtail to 60 % -> logger shows THROTTLED, 60.0 kW
 python -m logger.set_limit off       # remove the limit
 python -m logger.set_limit 150       # invalid -> exception code 03
+python -m simulator.inject grid_trip # Step 7: 51.6 Hz -> disconnect, reconnect delay, ramp
+python -m simulator.inject fan_failure   # Step 7: heatsink overheats -> derating
+python -m simulator.inject none      # clear the fan failure
 python -m simulator.pv_model 2026-07-15   # print one full day from the physics model
 python -m pytest                     # run the unit tests
 python -m logger.probe read 40070 2  # one FC03 request, raw bytes shown
@@ -118,7 +121,8 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 | 40070–40121 | 103 Three-phase inverter | A, V, W, Hz, VA, VAr, PF, WH (32-bit), DC A/V/W, temperatures, state |
 | 40122–40147 | 123 Immediate controls | `WMaxLimPct` @ 40127, `WMaxLim_Ena` @ 40131 (writable) |
 | 40148–40153 | 64001 Vendor | Simulated clock (not standard SunSpec) |
-| 40154–40155 | — | `0xFFFF 0` end marker |
+| 40154–40157 | 64002 Vendor | **Test** fault injection `TestFault` @ 40156 (Step 7, simulation only) |
+| 40158–40159 | — | `0xFFFF 0` end marker |
 
 ## Time plan (8–10 h/week)
 
@@ -130,7 +134,7 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 | 3 | SunSpec register map | 4–5 | ✅ walkthrough done |
 | 4 | Live Modbus TCP server | 3–4 | ✅ walkthrough done |
 | 5 | Data logger: polling, decoding, error handling | 4–5 | ✅ walkthrough done |
-| 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | hands-on |
+| 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | ✅ done |
 | 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | hands-on |
 | 8 | Docker Compose: whole system with one command | 3–4 | hands-on |
 | 10 | **Grafana dashboard** on the PostgreSQL historian (done before Step 9) | 4–6 | hands-on |
@@ -165,12 +169,12 @@ until each file's checkpoints are passed.
   - [x] Checkpoint: *Why read a whole model in one request instead of one register at a time?*
   - [x] Checkpoint: *What is exponential backoff and why not retry every 0.1 s?*
   - [x] Checkpoint: *The logger once showed E_logged = -90 kWh. Why, and how does the fix handle a counter reset?*
-- [ ] **Step 6 — PostgreSQL** (hands-on, ~5–6 h)
+- [x] **Step 6 — PostgreSQL** (hands-on, ~5–6 h)
   - [x] 6A: Docker Desktop installed, `docker compose up -d`, first SQL (CREATE / INSERT / SELECT / aggregates)
   - [x] 6B: design the tables (`devices`, `readings`, `alarms`) → `sql/schema.sql`
     - [x] Checkpoint: *Why does `readings` store only `device_id`, not the inverter's name and serial number?*
   - [x] 6C: logger writes every poll to PostgreSQL (`logger/db.py`, psycopg), store-and-forward + DB backoff
-  - [ ] 6D: KPI queries: daily energy, peak power, data availability
+  - [x] 6D: KPI queries (`sql/kpi_queries.sql`): daily energy (LAG), specific yield, peak, state hours (LEAD), availability, hourly profile
 - [ ] **Step 7 — Alarms + fault injection** (hands-on)
 - [ ] **Step 8 — Docker Compose** (hands-on)
 - [ ] **Step 10 — Grafana dashboard** (hands-on, ~4–6 h; done before Step 9)

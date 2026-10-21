@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from common.sunspec import (COMMON, CONTROLS, END_MODEL_ID, INVERTER_3PH, SIM_CLOCK,
-                            SUNS_MARKER, SUNSPEC_BASE, NOT_IMPL, Model, encode_point)
+from common.sunspec import (COMMON, CONTROLS, END_MODEL_ID, INVERTER_3PH, SIM_CLOCK, SIM_FAULT,
+                            SUNS_MARKER, SUNSPEC_BASE, NOT_IMPL, FAULT_CODES, Model, encode_point)
 from simulator.pv_model import Snapshot
 
 # Scale factors this "inverter firmware" uses. Chosen so every value fits in 16 bits:
@@ -45,7 +45,7 @@ IDENTITY = {
 }
 
 # Where each model starts (address of its ID register). Computed once.
-MODEL_ORDER = [COMMON, INVERTER_3PH, CONTROLS, SIM_CLOCK]
+MODEL_ORDER = [COMMON, INVERTER_3PH, CONTROLS, SIM_CLOCK, SIM_FAULT]
 MODEL_START: dict[int, int] = {}
 _addr = SUNSPEC_BASE + 2
 for _m in MODEL_ORDER:
@@ -115,7 +115,7 @@ def inverter_values(s: Snapshot) -> dict:
         "Tmp_SF": sf["Tmp_SF"],
         "St": s.state,
         "StVnd": s.state,
-        "Evt1": 0,
+        "Evt1": s.events,          # Step 7: the inverter's own event flags
         "Evt2": 0,
     }
 
@@ -138,11 +138,13 @@ def build_register_image(s: Snapshot, sim_time: datetime, speed: int) -> list[in
     regs += _fill_model(INVERTER_3PH, inverter_values(s))
     regs += _fill_model(CONTROLS, control_values(s.power_limit_pct, s.power_limit_enabled))
     regs += _fill_model(SIM_CLOCK, {"SimTime": int(sim_time.replace(tzinfo=timezone.utc).timestamp()), "Speed": speed, "Pad": 0})
+    fault_code = {v: k for k, v in FAULT_CODES.items()}.get(s.fault, 0)
+    regs += _fill_model(SIM_FAULT, {"TestFault": fault_code, "Pad": 0})
     regs += [END_MODEL_ID, 0]
     assert len(regs) == TOTAL_REGISTERS
     return regs
 
 
-def control_address(point_name: str) -> int:
-    """Absolute Modbus address of a point in model 123."""
-    return MODEL_START[CONTROLS.id] + 2 + CONTROLS.point(point_name).offset
+def control_address(point_name: str, model: Model = CONTROLS) -> int:
+    """Absolute Modbus address of a point (default: model 123)."""
+    return MODEL_START[model.id] + 2 + model.point(point_name).offset

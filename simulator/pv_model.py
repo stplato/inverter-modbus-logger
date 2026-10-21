@@ -54,6 +54,18 @@ ST_SHUTTING_DOWN, ST_FAULT, ST_STANDBY = 6, 7, 8
 STATE_NAMES = {1: "OFF", 2: "SLEEPING", 3: "STARTING", 4: "MPPT", 5: "THROTTLED",
                6: "SHUTTING_DOWN", 7: "FAULT", 8: "STANDBY"}
 
+# SunSpec model 103 "Evt1" event bits (the inverter's own alarm flags) - Step 7
+EVT_GRID_DISCONNECT = 1 << 4
+EVT_OVER_TEMP = 1 << 7
+EVT_OVER_FREQUENCY = 1 << 8
+
+# Grid-code style protection settings (Step 7)
+F_TRIP_HIGH, F_TRIP_LOW = 51.5, 47.5     # Hz: disconnect outside this band
+RECONNECT_DELAY_S = 180                  # wait after the grid is healthy again (grid codes: >= 60 s, often 1-5 min)
+RAMP_PCT_PER_MIN = 10                    # max power increase after reconnecting
+T_DERATE_START, T_DERATE_ZERO = 70.0, 80.0   # heatsink degC: linear power derating
+T_SHUTDOWN = 85.0                        # heatsink degC: protective shutdown
+
 
 # ---------------------------------------------------------------------------
 # 0. Local time -> UTC (Greece: UTC+2 in winter, UTC+3 in summer)
@@ -204,6 +216,8 @@ class Snapshot:
     state: int = ST_SLEEPING
     power_limit_pct: float = 100.0
     power_limit_enabled: bool = False
+    events: int = 0                # SunSpec Evt1 bitfield
+    fault: str = "none"            # injected test fault (simulation only)
 
 
 @dataclass
@@ -217,6 +231,23 @@ class Inverter:
     _last_time: datetime | None = None
     _last_w: float | None = None
     _cloud: float = 1.0
+    # --- Step 7: fault injection state ---
+    fault: str = "none"                 # "none", "fan_failure", "grid_trip"
+    _t_snk: float | None = None         # heatsink temperature (has thermal inertia)
+    _grid_trip_until: datetime | None = None
+    _reconnect_at: datetime | None = None
+    _ramp_pct: float = 100.0
+    _was_disconnected: bool = False
+
+    def inject(self, kind: str, now: datetime) -> None:
+        """Start or clear a test fault (simulation only - real inverters can't do this!)."""
+        if kind == "grid_trip":
+            self.fault = "grid_trip"
+            self._grid_trip_until = now + timedelta(minutes=2)    # over-frequency lasts 2 min
+        elif kind == "fan_failure":
+            self.fault = "fan_failure"
+        else:
+            self.fault = "none"
 
     def __post_init__(self) -> None:
         self.rng = random.Random(self.seed)
@@ -253,29 +284,62 @@ class Inverter:
                         power_limit_pct=self.power_limit_pct,
                         power_limit_enabled=self.power_limit_enabled)
 
-        # --- inverter decision: sleep, MPPT, or throttled ------------------
+        n = self.rng.gauss
+
+        # --- grid frequency (a grid_trip fault pushes it to 51.6 Hz) -----------
+        snap.hz = cfg.f_grid + n(0, 0.01)
+        if self.fault == "grid_trip":
+            if self._grid_trip_until and t_local < self._grid_trip_until:
+                snap.hz = 51.6 + n(0, 0.02)
+            else:
+                self.fault = "none"                  # the grid event is over
+        grid_ok = F_TRIP_LOW <= snap.hz <= F_TRIP_HIGH
+
+        # --- heatsink temperature from the PREVIOUS step (thermal inertia) ------
+        t_snk = self._t_snk if self._t_snk is not None else t_amb
+
+        # --- inverter decision ----------------------------------------------------
         limit_w = cfg.p_ac_nom
         if self.power_limit_enabled:
             limit_w = cfg.p_ac_nom * self.power_limit_pct / 100
+        derate = min(1.0, max(0.0, (T_DERATE_ZERO - t_snk) / (T_DERATE_ZERO - T_DERATE_START)))
+        limit_w = min(limit_w, cfg.p_ac_nom * derate)          # temperature derating
 
-        if p_dc_avail < 2 * cfg.inv_self_consumption:
+        events = 0
+        p_ac = p_dc = 0.0
+        if not grid_ok:
+            # Protection: disconnect immediately, then wait before reconnecting
+            snap.state = ST_FAULT
+            events |= EVT_GRID_DISCONNECT | EVT_OVER_FREQUENCY
+            self._reconnect_at = t_local + timedelta(seconds=RECONNECT_DELAY_S)
+            self._was_disconnected = True
+        elif t_snk >= T_SHUTDOWN:
+            snap.state = ST_FAULT
+            events |= EVT_OVER_TEMP
+        elif self._reconnect_at and t_local < self._reconnect_at:
+            snap.state = ST_STARTING                  # grid is back: waiting the reconnect delay
+            events |= EVT_GRID_DISCONNECT
+        elif p_dc_avail < 2 * cfg.inv_self_consumption:
             snap.state = ST_SLEEPING
-            p_ac = 0.0
-            p_dc = 0.0
         else:
+            if self._was_disconnected:                # just reconnected: start the power ramp
+                self._ramp_pct, self._was_disconnected = 0.0, False
+            self._ramp_pct = min(100.0, self._ramp_pct + RAMP_PCT_PER_MIN * dt_s / 60)
+            limit_w = min(limit_w, cfg.p_ac_nom * self._ramp_pct / 100)
+
             p_ac_avail = p_dc_avail - inverter_losses(cfg, p_dc_avail)
             if p_ac_avail > limit_w:
-                snap.state = ST_THROTTLED          # clipping or curtailment
-                p_ac = limit_w
-                p_dc = p_ac + inverter_losses(cfg, p_ac)   # inverter moves off the MPP
+                snap.state = ST_THROTTLED          # clipping, curtailment, derating or ramp
+                p_ac = max(0.0, limit_w)
+                p_dc = p_ac + inverter_losses(cfg, p_ac) if p_ac > 0 else 0.0
             else:
                 snap.state = ST_MPPT
                 p_ac = p_ac_avail
                 p_dc = p_dc_avail
+        snap.events = events
+        snap.fault = self.fault
 
         # --- electrical values with a little measurement noise -------------
-        n = self.rng.gauss
-        snap.hz = cfg.f_grid + n(0, 0.01)
         snap.v_phase = tuple(cfg.v_grid_phase + n(0, 0.8) for _ in range(3))
         snap.pf = 1.0
         snap.ac_w = p_ac
@@ -286,9 +350,15 @@ class Inverter:
         snap.dc_v = dc_voltage(cfg, poa, t_cell) if p_dc > 0 else 0.0
         snap.dc_a = p_dc / snap.dc_v if snap.dc_v > 0 else 0.0
 
-        # --- temperatures and energy counter --------------------------------
+        # --- temperatures: heatsink follows the load with a 5-minute time constant ----
         load = p_ac / cfg.p_ac_nom
-        snap.t_heatsink = t_amb + 28 * load + n(0, 0.2)
+        k_thermal = 56 if self.fault == "fan_failure" else 28   # degC at full load; doubled without fan
+        target = t_amb + k_thermal * load
+        if self._t_snk is None:
+            self._t_snk = target
+        else:
+            self._t_snk += (target - self._t_snk) * (1 - math.exp(-dt_s / 300))
+        snap.t_heatsink = self._t_snk + n(0, 0.2)
         snap.t_cabinet = t_amb + 9 * load + n(0, 0.1)
         if dt_s > 0 and self._last_w is not None:
             self.energy_wh += (self._last_w + p_ac) / 2 * dt_s / 3600   # trapezoid

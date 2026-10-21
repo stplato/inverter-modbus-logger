@@ -194,3 +194,30 @@ RECEIVED  00 01 00 00 00 07 01 | 03 | 04 | 00 67 | 00 32
 - Device registered by serial number (`ON CONFLICT (serial_number) DO UPDATE ... RETURNING device_id`).
 - Readings: `ON CONFLICT (device_id, time) DO NOTHING` → duplicate-safe.
 - COMMS_LOST rows get an **estimated** device time (last good time + elapsed × clock speed).
+
+## Step 6D — KPI queries (`sql/kpi_queries.sql`)
+
+### Clean clear-sky day, 15 April (simulated), 120 kWp / 100 kW
+| KPI | Result |
+|---|---|
+| Daily energy (robust, LAG) | **792.5 kWh** = physics model 792 kWh ✓ |
+| Specific yield | **6.60 kWh/kWp** |
+| Peak power | 100 kW at 12:22 (THROTTLED = clipping) |
+| Hours: MPPT / THROTTLED (clipping) / SLEEPING | 10.7 / 2.2 / 2.8 h |
+| Data availability | 99.6 % (237/238) |
+- Clipping shows as a **flat top** in the hourly profile (~100 kWh/h for 3 hours).
+- Curtailment shows as a **dip**: 60 % limit 12:00–13:30 → ~70 kWh/h, cost ≈ 59 kWh (7.5 % of the day) in my test run.
+
+### SQL techniques
+- `GROUP BY date(time)`, `count(*) FILTER (WHERE ...)`, `date_trunc('hour', ...)`.
+- **Window functions:** `LAG()` = previous row (counter deltas), `LEAD()` = next row (durations), `PARTITION BY device_id`.
+
+### Simple vs robust daily energy
+- max − min breaks when a counter **resets** (inverter replaced: 152,700 − 0 = 152,700 kWh "in one day").
+- Sum of positive LAG deltas handles resets (360 + 400 = 760 kWh).
+- **But** robust ≠ bulletproof: two runs mixed under one device_id → counter zig-zag → **12,227 kWh / 101.9 kWh/kWp**.
+  Found with a **physics sanity check** (>8 kWh/kWp/day is impossible), fixed with
+  `DELETE FROM readings WHERE logged_at >= ...` (the logger's own clock column).
+- **Interview sentence:** "Before trusting a KPI, I sanity-check it against physics. A daily specific yield of 100 kWh/kWp is
+  impossible, so I checked the raw counters and found two devices' data mixed under one ID. Robust formulas handle counter
+  resets, but not mapping errors — that's why device identity and data validation matter."

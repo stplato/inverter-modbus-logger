@@ -22,7 +22,7 @@ from pymodbus.constants import ExcCodes
 from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
-from common.sunspec import CONTROLS, SUNSPEC_BASE, STATE_NAMES, to_int16
+from common.sunspec import CONTROLS, FAULT_CODES, SIM_FAULT, SUNSPEC_BASE, STATE_NAMES, decode_events, to_int16
 from simulator.pv_model import Inverter
 from simulator.sunspec_map import (MODEL_START, TOTAL_REGISTERS, build_register_image,
                                    control_address)
@@ -45,7 +45,8 @@ class InverterDevice:
         self.addr_conn = control_address("Conn")
         self.addr_limit = control_address("WMaxLimPct")
         self.addr_enable = control_address("WMaxLim_Ena")
-        self.writable = {self.addr_conn, self.addr_limit, self.addr_enable}
+        self.addr_fault = control_address("TestFault", SIM_FAULT)      # Step 7 (test only)
+        self.writable = {self.addr_conn, self.addr_limit, self.addr_enable, self.addr_fault}
 
     # --- the clock ------------------------------------------------------
     async def run_clock(self) -> None:
@@ -56,15 +57,17 @@ class InverterDevice:
             self.snapshot = self.inverter.step(self.sim_time)
             self.image = build_register_image(self.snapshot, self.sim_time, self.speed)
             tick += 1
-            if tick % 10 == 1:
+            if tick % 10 == 1 or self.snapshot.events or self.snapshot.fault != "none":
                 self.print_status()
 
     def print_status(self) -> None:
         s = self.snapshot
         limit = f"{s.power_limit_pct:.0f}%" if s.power_limit_enabled else "off"
+        events = ",".join(decode_events(s.events)) or "-"
+        fault = f"   [TEST FAULT: {s.fault}]" if s.fault != "none" else ""
         print(f"[{self.sim_time:%Y-%m-%d %H:%M}]  POA {s.poa:5.0f} W/m2   "
-              f"P_ac {s.ac_w / 1000:6.1f} kW   T_snk {s.t_heatsink:4.1f} C   "
-              f"limit {limit:>4}   {STATE_NAMES[s.state]}")
+              f"P_ac {s.ac_w / 1000:6.1f} kW   T_snk {s.t_heatsink:4.1f} C   Hz {s.hz:5.2f}   "
+              f"limit {limit:>4}   {STATE_NAMES[s.state]:9} events {events}{fault}")
 
     # --- called by pymodbus on every request ------------------------------
     async def on_request(self, function_code, start_address, address, count,
@@ -90,9 +93,18 @@ class InverterDevice:
                 self.inverter.power_limit_enabled = bool(v)
             elif a == self.addr_conn:
                 self.connected = bool(v)
+            elif a == self.addr_fault:
+                if v not in FAULT_CODES:
+                    return ExcCodes.ILLEGAL_VALUE
+                self.inverter.inject(FAULT_CODES[v], self.sim_time)
+                print(f"  >>> TEST FAULT injected: {FAULT_CODES[v]}")
+                self.snapshot.fault = self.inverter.fault
+                self.image = build_register_image(self.snapshot, self.sim_time, self.speed)
+                return None
         # refresh the register image now, so a read-back shows the new setpoint
         self.snapshot.power_limit_pct = self.inverter.power_limit_pct
         self.snapshot.power_limit_enabled = self.inverter.power_limit_enabled
+        self.snapshot.fault = self.inverter.fault
         self.image = build_register_image(self.snapshot, self.sim_time, self.speed)
         print(f"  > SCADA wrote {list(set_values)} at {address}: power limit "
               f"{self.inverter.power_limit_pct:.0f}% "
@@ -135,7 +147,7 @@ async def main() -> None:
     print(f"  Modbus TCP {args.host}:{args.port}, device id {DEVICE_ID}")
     print(f"  SunSpec map at {SUNSPEC_BASE}..{SUNSPEC_BASE + TOTAL_REGISTERS - 1}  "
           f"(model 1 @ {MODEL_START[1]}, 103 @ {MODEL_START[103]}, "
-          f"123 @ {MODEL_START[CONTROLS.id]}, 64001 @ {MODEL_START[64001]})")
+          f"123 @ {MODEL_START[CONTROLS.id]}, 64001 @ {MODEL_START[64001]}, 64002 @ {MODEL_START[64002]})")
     print(f"  Clock: {start:%Y-%m-%d %H:%M}, {args.speed}x speed "
           f"(1 real minute = {args.speed} simulated minutes)")
     print("  Ctrl + C to stop\n")

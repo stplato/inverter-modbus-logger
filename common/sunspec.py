@@ -11,6 +11,7 @@ Layout starting at holding register 40000 (FC03):
         model 103   Three-phase inverter measurements
         model 123   Immediate controls (power limit = curtailment)
         model 64001 Vendor model: simulator clock (NOT standard, only for this project)
+        model 64002 Vendor model: test fault injection (NOT standard, Step 7)
     0xFFFF 0     end of the chain
 
 Every scaled value comes with a Scale Factor (SF) register:
@@ -148,7 +149,29 @@ SIM_CLOCK = Model(64001, 4, "Simulator Clock (vendor)", (
     Point("Pad", 3, "uint16"),
 ))
 
-MODELS = {m.id: m for m in (COMMON, INVERTER_3PH, CONTROLS, SIM_CLOCK)}
+# --- Model 64002: vendor model for TEST fault injection (Step 7, simulation only) ----
+SIM_FAULT = Model(64002, 2, "Simulator Fault Injection (vendor)", (
+    Point("TestFault", 0, "enum16", writable=True),   # 0 none, 1 fan_failure, 2 grid_trip
+    Point("Pad", 1, "uint16"),
+))
+FAULT_CODES = {0: "none", 1: "fan_failure", 2: "grid_trip"}
+
+MODELS = {m.id: m for m in (COMMON, INVERTER_3PH, CONTROLS, SIM_CLOCK, SIM_FAULT)}
+
+# Model 103 "Evt1" bitfield: the inverter's own event / alarm flags (SunSpec standard)
+EVT1_BITS = {
+    0: "GROUND_FAULT", 1: "DC_OVER_VOLT", 2: "AC_DISCONNECT", 3: "DC_DISCONNECT",
+    4: "GRID_DISCONNECT", 5: "CABINET_OPEN", 6: "MANUAL_SHUTDOWN", 7: "OVER_TEMP",
+    8: "OVER_FREQUENCY", 9: "UNDER_FREQUENCY", 10: "AC_OVER_VOLT", 11: "AC_UNDER_VOLT",
+    12: "BLOWN_STRING_FUSE", 13: "UNDER_TEMP", 14: "MEMORY_LOSS", 15: "HW_TEST_FAILURE",
+}
+
+
+def decode_events(evt1: int | None) -> list[str]:
+    """Bitfield -> list of active event names, e.g. 0b100010000 -> ['GRID_DISCONNECT', 'OVER_FREQUENCY']."""
+    if not evt1:
+        return []
+    return [name for bit, name in EVT1_BITS.items() if evt1 & (1 << bit)]
 
 STATE_NAMES = {1: "OFF", 2: "SLEEPING", 3: "STARTING", 4: "MPPT", 5: "THROTTLED",
                6: "SHUTTING_DOWN", 7: "FAULT", 8: "STANDBY"}
