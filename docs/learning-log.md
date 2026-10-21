@@ -175,3 +175,22 @@ RECEIVED  00 01 00 00 00 07 01 | 03 | 04 | 00 67 | 00 32
 - Data types: `real` for measurements, `numeric(14,3)` for energy counters (exact), `timestamptz` for time.
 - **Interview sentence:** "I let the database enforce data quality with constraints — unique serials, foreign keys and
   check constraints — so bad data is rejected at the door instead of being cleaned up later."
+
+## Step 6C — Logger → PostgreSQL (`logger/db.py`)
+
+### Store-and-forward (tested on my PC, 20 Oct)
+- `docker compose stop` while logging → "database unavailable – buffering readings" → 11 readings kept in memory →
+  `docker compose start` → "wrote 11 buffered readings". **59 printed = 59 rows in the DB: nothing lost.**
+- **Interview sentence:** "The logger uses store-and-forward: if the historian is down, readings are buffered locally and
+  written when it returns, so a database restart never creates a gap in the data."
+
+### Bug found: a database problem slowed down polling
+- During the outage, polls went from every 2 s to every ~3 s: each poll waited for the 3 s DB connect timeout.
+- On a real site, a historian problem must **never** slow data acquisition from the devices.
+- Fix: **reconnect backoff for the DB too** (5 → 10 → 20 → 30 s). Retest: only 2 slow polls in an 18 s outage, then normal.
+- Professional systems go further: the DB writer runs in a **separate thread or process** with a queue between poller and writer.
+
+### Other 6C details
+- Device registered by serial number (`ON CONFLICT (serial_number) DO UPDATE ... RETURNING device_id`).
+- Readings: `ON CONFLICT (device_id, time) DO NOTHING` → duplicate-safe.
+- COMMS_LOST rows get an **estimated** device time (last good time + elapsed × clock speed).

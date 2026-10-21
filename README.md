@@ -169,7 +169,7 @@ until each file's checkpoints are passed.
   - [x] 6A: Docker Desktop installed, `docker compose up -d`, first SQL (CREATE / INSERT / SELECT / aggregates)
   - [x] 6B: design the tables (`devices`, `readings`, `alarms`) → `sql/schema.sql`
     - [x] Checkpoint: *Why does `readings` store only `device_id`, not the inverter's name and serial number?*
-  - [ ] 6C: logger writes every poll to PostgreSQL (`logger/db.py`, psycopg)
+  - [x] 6C: logger writes every poll to PostgreSQL (`logger/db.py`, psycopg), store-and-forward + DB backoff
   - [ ] 6D: KPI queries: daily energy, peak power, data availability
 - [ ] **Step 7 — Alarms + fault injection** (hands-on)
 - [ ] **Step 8 — Docker Compose** (hands-on)
