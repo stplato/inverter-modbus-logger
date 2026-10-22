@@ -26,6 +26,7 @@ from pymodbus.client import ModbusTcpClient
 
 from common.sunspec import COMMON, CONTROLS, INVERTER_3PH, SIM_CLOCK, STATE_NAMES, decode_events
 from logger.decoder import ModbusReadError, decode_model, discover, read_model
+from logger.alarms import AlarmManager
 from logger.db import DEFAULT_DSN, Historian
 
 CSV_FIELDS = ["time_device", "time_logger", "quality", "state", "ac_kw", "dc_kw", "dc_v",
@@ -41,6 +42,7 @@ class Poller:
         self.models: dict[int, tuple[int, int]] = {}
         self.csv_dir = csv_dir
         self.historian = historian
+        self.alarms = AlarmManager(historian)                       # Step 7B
         self.identity: dict | None = None     # model 1: manufacturer, model, serial, firmware
         self.db_device_id: int | None = None  # devices.device_id in PostgreSQL
         self.last_dev_time: datetime | None = None   # to estimate time during COMMS_LOST
@@ -91,6 +93,7 @@ class Poller:
             serial=ident["SN"], firmware=ident["Vr"], host=self.host, port=self.port,
             unit_id=self.device_id)
         if self.db_device_id is not None:
+            self.alarms.device_id = self.db_device_id
             print(f"Database: {ident['SN']} is device_id {self.db_device_id}")
 
     # --- one poll ---------------------------------------------------------
@@ -108,6 +111,9 @@ class Poller:
             self.speed = clock.get("Speed") or 1
         else:
             t_dev = datetime.now()
+        if self.last_dev_time is not None and t_dev < self.last_dev_time - timedelta(minutes=1):
+            print(f"  ! device clock jumped BACKWARDS: {self.last_dev_time:%H:%M} -> {t_dev:%H:%M} "
+                  "(device restarted / clock reset?) - data and alarm times may overlap")
         self.last_dev_time, self.last_dev_mono = t_dev, time.monotonic()
 
         # Energy = sum of counter INCREASES. If the counter goes backwards the device
@@ -176,6 +182,8 @@ class Poller:
             if self.db_device_id is not None and row.get("time_device"):
                 self.historian.store(self.db_device_id,
                                      datetime.fromisoformat(row["time_device"]), row)
+        if row.get("time_device"):                    # Step 7B: alarms on every poll
+            self.alarms.evaluate(row, datetime.fromisoformat(row["time_device"]))
         self.csv_dir.mkdir(parents=True, exist_ok=True)
         path = self.csv_dir / f"readings_{datetime.now():%Y%m%d}.csv"
         new_file = not path.exists()

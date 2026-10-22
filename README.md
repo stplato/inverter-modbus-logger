@@ -64,9 +64,10 @@ in a database.
 │   ├── decoder.py             ← Step 5: discover models, read blocks, apply scale factors
 │   ├── poller.py              ← Step 5: poll loop, CSV storage, COMMS_LOST + reconnect
 │   ├── db.py                  ← Step 6C: PostgreSQL historian, store-and-forward buffer
+│   ├── alarms.py              ← Step 7B: alarm manager (device events, thresholds with delay + hysteresis, comms)
 │   ├── set_limit.py           ← Step 5: send a curtailment command (model 123)
 │   └── probe.py               ← "Modbus Poll" tool: send ONE read/write and see the bytes
-├── tests/                     ← pytest unit tests (12 tests)
+├── tests/                     ← pytest unit tests (19 tests)
 ├── data/                      ← CSV output of the logger (not in Git)
 └── docs/                      ← notes and learning log
 ```
@@ -176,6 +177,10 @@ until each file's checkpoints are passed.
   - [x] 6C: logger writes every poll to PostgreSQL (`logger/db.py`, psycopg), store-and-forward + DB backoff
   - [x] 6D: KPI queries (`sql/kpi_queries.sql`): daily energy (LAG), specific yield, peak, state hours (LEAD), availability, hourly profile
 - [ ] **Step 7 — Alarms + fault injection** (hands-on)
+  - [x] 7A: fault injection (`simulator/inject.py`: fan_failure, grid_trip), SunSpec `Evt1` events, derating, reconnect delay + ramp
+    - [x] Exercise: SCADA missed the over-frequency between two polls → latched events / event logs / push protocols
+  - [ ] 7B: alarm manager (`logger/alarms.py`): raise/clear in `alarms` table, delay + hysteresis, COMMS_LOST alarm
+    - [ ] Checkpoint: *What happens with "alarm when T > 70, clear when T ≤ 70" if T hovers around 70 °C?*
 - [ ] **Step 8 — Docker Compose** (hands-on)
 - [ ] **Step 10 — Grafana dashboard** (hands-on, ~4–6 h; done before Step 9)
   - [ ] Grafana container in `docker-compose.yml`, PostgreSQL data source provisioned automatically

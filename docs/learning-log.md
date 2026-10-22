@@ -221,3 +221,61 @@ RECEIVED  00 01 00 00 00 07 01 | 03 | 04 | 00 67 | 00 32
 - **Interview sentence:** "Before trusting a KPI, I sanity-check it against physics. A daily specific yield of 100 kWh/kWp is
   impossible, so I checked the raw counters and found two devices' data mixed under one ID. Robust formulas handle counter
   resets, but not mapping errors — that's why device identity and data validation matter."
+
+## Step 7A — Fault injection (`simulator/inject.py`, `pv_model.py`)
+
+| Fault | Physics | Inverter reaction |
+|---|---|---|
+| `fan_failure` | heatsink heats ~2× faster | **derating** above 70 °C → settles ~90 kW / ~71 °C |
+| `grid_trip` | frequency 51.6 Hz for 2 min | **FAULT** (GRID_DISCONNECT + OVER_FREQUENCY) → **STARTING** (3 min reconnect delay) → **ramp 10 %/min** |
+- Events are reported in SunSpec model 103 **`Evt1`** bitfield (bit 4 GRID_DISCONNECT, 7 OVER_TEMP, 8 OVER_FREQUENCY ...).
+- `TestFault` (model 64002) is test-only; real faults come from the real world.
+
+### What the SCADA missed (21 Oct test)
+- Inverter: 11:19 FAULT, 51.62 Hz, OVER_FREQUENCY. SCADA (poll every 2 sim-min): 11:18 MPPT → 11:20 STARTING.
+- **An event shorter than the poll interval can fall between two polls**: SCADA saw the consequence (GRID_DISCONNECT),
+  not the cause (OVER_FREQUENCY).
+- Why it matters: wrong root cause (technician sent for nothing), **availability contracts exclude grid-caused downtime**
+  (no proof → owner can't claim, O&M gets penalised), grid-code compliance can't be proven.
+- Solutions: latched events, device event logs, fast polling of status registers, push protocols (IEC 61850, MQTT).
+- **Interview sentence:** "Polling can miss events shorter than the poll interval. In my simulator the SCADA saw the grid
+  disconnect but missed the over-frequency that caused it. Real systems use latched event bits, device event logs or push
+  protocols like IEC 61850 and MQTT, because the root cause matters for O&M and for availability contracts."
+
+## Step 7B — Alarm manager (`logger/alarms.py`)
+
+### Alarm flapping (the 10-poll question)
+- T hovering 69.7–71.1 °C with "ON > 70, OFF ≤ 70" → **4 alarms in 10 polls** (hundreds per day) = **flapping/chattering**.
+- Moving the threshold (75 °C) doesn't fix it, it only moves it — and loses the early warning.
+- Fix = **on-delay** (3 polls in a row > 70) + **hysteresis** (clear only < 65) → **1 alarm**. Proven in `tests/test_alarms.py`.
+- **Interview sentence:** "To avoid alarm flapping I use an on-delay and hysteresis: raise only after the condition persists for several
+  polls, and clear at a lower threshold than the raise threshold. One meaningful alarm beats hundreds the operators learn to ignore."
+
+### Three kinds of alarm rules
+| Type | Example | Raise | Clear |
+|---|---|---|---|
+| Device events (Evt1) | GRID_DISCONNECT, OVER_FREQUENCY | bit appears | bit disappears |
+| SCADA threshold | HIGH_TEMP (WARNING) | > 70 °C for 3 polls | < 65 °C |
+| Communication | COMMS_LOST (CRITICAL) | 3 failed polls | first good poll |
+- One active alarm per device+code enforced by a **partial UNIQUE index** (`WHERE cleared_at IS NULL`).
+- Alarm raises/clears are **store-and-forward** too (queued in order if the DB is down).
+
+### Test run 22 Oct (fan failure → grid trip → comms loss)
+| Alarm | Duration |
+|---|---|
+| HIGH_TEMP | 28 min, raised **once** while T hovered 70.7–71.5 °C |
+| OVER_FREQUENCY | 1 min (caught with 1-min polling) |
+| GRID_DISCONNECT | 3 min (incl. reconnect delay) |
+| COMMS_LOST | 8 min |
+
+### COMMS_LOST must not clear other alarms
+- **Interview sentence:** "When a device stops communicating, I keep its existing alarms active, because unknown is not the same as
+  cleared. The comms loss and the fault often share a root cause, like a substation outage, and a false all-clear is worse than an
+  honest unknown."
+
+### Clock jumps and overlapping experiments
+- Restarting the simulator at an earlier time = device clock jumped back 14:11 → 11:01 → negative alarm duration and mixed counters
+  (KPI 2 = 15,000 kWh). Real-world twin: inverter clock reset after power loss, wrong NTP sync.
+- Fixes: logger warns "device clock jumped BACKWARDS"; alarm clear time never before raise time.
+- Cleanup with `logged_at` (`DELETE FROM readings WHERE logged_at >= '2026-10-22'`) → back to 792.5 kWh.
+- Rule: **one experiment = one simulated day**.

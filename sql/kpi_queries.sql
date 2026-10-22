@@ -85,3 +85,20 @@ SELECT  date_trunc('hour', time)                      AS hour,
 FROM    deltas
 GROUP BY 1
 ORDER BY 1;
+
+-- ---------------------------------------------------------------------------
+-- KPI 7 (Step 7B). Alarm report: every alarm, how long it lasted, still active?
+-- ---------------------------------------------------------------------------
+SELECT  a.alarm_id, d.name, a.code, a.severity,
+        a.started_at, a.cleared_at,
+        coalesce(a.cleared_at, now()) - a.started_at AS duration,
+        CASE WHEN a.cleared_at IS NULL THEN 'ACTIVE' ELSE 'cleared' END AS status
+FROM    alarms a JOIN devices d USING (device_id)
+ORDER BY a.started_at;
+
+-- KPI 8 (Step 7B). Alarm summary per code: how often, total time
+SELECT  code, severity, count(*) AS times,
+        sum(coalesce(cleared_at, now()) - started_at) AS total_duration
+FROM    alarms
+GROUP BY code, severity
+ORDER BY total_duration DESC;

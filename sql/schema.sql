@@ -63,3 +63,8 @@ CREATE TABLE IF NOT EXISTS alarms (
 );
 
 CREATE INDEX IF NOT EXISTS alarms_active_idx ON alarms (device_id) WHERE cleared_at IS NULL;
+
+-- Step 7B: at most ONE active alarm per device and code (a partial unique index:
+-- it only applies to rows where cleared_at IS NULL, so history can repeat the code).
+CREATE UNIQUE INDEX IF NOT EXISTS alarms_one_active_idx
+    ON alarms (device_id, code) WHERE cleared_at IS NULL;
