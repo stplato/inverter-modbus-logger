@@ -1,11 +1,21 @@
-# Step 6 - PostgreSQL database (the "historian") running in Docker.
-# Step 8 will add the simulator and the logger here too.
+# Step 8 - The whole system with ONE command:
 #
-#   docker compose up -d        start in the background
-#   docker compose ps           is it running?
-#   docker compose logs db      see its log
-#   docker compose down         stop (data is KEPT in the volume)
-#   docker compose down -v      stop AND delete all data
+#   docker compose up -d --build     build the image (first time / after code changes) and start
+#   docker compose ps                what is running?
+#   docker compose logs -f logger    watch the SCADA logger live (Ctrl + C stops watching, not the logger)
+#   docker compose logs -f simulator watch the inverter
+#   docker compose stop              stop everything (data is KEPT)
+#   docker compose down              stop and remove containers (data is KEPT in the volume)
+#   docker compose down -v           stop and DELETE all data
+#
+# Choose the simulated day (one experiment = one day):
+#   PowerShell:  $env:SIM_START="2026-04-17 05:00"; docker compose up -d --build
+#
+#    +-----------+   Modbus TCP   +---------+    SQL    +-------------------+
+#    | simulator | <------------- | logger  | --------> | db (PostgreSQL)   |
+#    | :5020     |  "simulator"   |         |   "db"    | :5432 (PC: 5433)  |
+#    +-----------+                +---------+           +-------------------+
+#    Inside Docker, services find each other by NAME, not by 127.0.0.1.
 
 services:
   db:
@@ -17,7 +27,7 @@ services:
       POSTGRES_DB: scada
       TZ: Europe/Athens
     ports:
-      - "5433:5432"        # your PC port 5433 -> container port 5432 (5433 avoids clashing with any local PostgreSQL)
+      - "5433:5432"        # your PC port 5433 -> container port 5432
     volumes:
       - pgdata:/var/lib/postgresql/data     # database files survive container restarts
     healthcheck:
@@ -25,6 +35,39 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  simulator:
+    build: .
+    image: pv-scada:latest
+    container_name: pv-inverter
+    command: ["python", "-m", "simulator.server"]
+    environment:
+      SIM_HOST: 0.0.0.0                     # listen on all interfaces, not only inside the container
+      SIM_PORT: "5020"
+      SIM_START: ${SIM_START:-2026-04-16 06:00}
+      SIM_SPEED: ${SIM_SPEED:-60}
+    ports:
+      - "5020:5020"        # so probe / set_limit / inject still work from your PC
+    restart: unless-stopped
+
+  logger:
+    build: .                                # same Dockerfile -> same image (built once, cached)
+    image: pv-scada:latest
+    container_name: pv-logger
+    command: ["python", "-m", "logger.poller"]
+    environment:
+      INVERTER_HOST: simulator              # the service name above = its hostname
+      INVERTER_PORT: "5020"
+      POLL_INTERVAL: ${POLL_INTERVAL:-2}
+      PV_DB_DSN: host=db port=5432 dbname=scada user=solar password=${POSTGRES_PASSWORD:-solar_dev}
+    volumes:
+      - ./data:/app/data                    # CSV backup files appear in your project's data/ folder
+    depends_on:
+      db:
+        condition: service_healthy          # wait until PostgreSQL really accepts connections
+      simulator:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

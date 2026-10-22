@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -196,10 +197,12 @@ class Poller:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="SunSpec Modbus data logger")
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=5020)
+    # Defaults can come from environment variables (used by docker-compose.yml)
+    ap.add_argument("--host", default=os.environ.get("INVERTER_HOST", "127.0.0.1"))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("INVERTER_PORT", 5020)))
     ap.add_argument("--device-id", type=int, default=1)
-    ap.add_argument("--interval", type=float, default=5.0, help="seconds between polls")
+    ap.add_argument("--interval", type=float, default=float(os.environ.get("POLL_INTERVAL", 5.0)),
+                    help="seconds between polls")
     ap.add_argument("--csv-dir", default="data")
     ap.add_argument("--db", default=DEFAULT_DSN, help="PostgreSQL connection string")
     ap.add_argument("--no-db", action="store_true", help="CSV only (no database)")

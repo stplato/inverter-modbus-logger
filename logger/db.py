@@ -13,6 +13,7 @@ import os
 import time
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 
 import psycopg
 
@@ -20,6 +21,10 @@ logging.getLogger("psycopg").setLevel(logging.CRITICAL)   # we report DB problem
 
 DEFAULT_DSN = os.environ.get(
     "PV_DB_DSN", "host=127.0.0.1 port=5433 dbname=scada user=solar password=solar_dev")
+
+# Step 8: the logger creates the tables itself on first connect, so a brand-new database
+# (e.g. a recruiter running `docker compose up` on their laptop) works with no manual step.
+SCHEMA_FILE = Path(__file__).resolve().parent.parent / "sql" / "schema.sql"
 
 READING_COLUMNS = ["time", "device_id", "quality", "state", "ac_kw", "dc_kw", "dc_v", "dc_a",
                    "v_phase_a", "hz", "pf_pct", "t_heatsink_c", "t_cabinet_c", "energy_kwh",
@@ -65,6 +70,7 @@ class Historian:
         # for connect_timeout seconds and would slow down polling of the inverters.
         self.backoff = 5.0
         self.next_attempt = 0.0
+        self.schema_ready = False
 
     # --- connection -------------------------------------------------------
     def _connect(self) -> bool:
@@ -76,6 +82,9 @@ class Historian:
             self.conn = psycopg.connect(self.dsn, autocommit=True, connect_timeout=3)
             # Device times are Athens local time -> let PostgreSQL attach the right offset
             self.conn.execute("SET TIME ZONE 'Europe/Athens'")
+            if not self.schema_ready and SCHEMA_FILE.exists():
+                self.conn.execute(SCHEMA_FILE.read_text(encoding="utf-8"))   # all IF NOT EXISTS
+                self.schema_ready = True
             if self.warned:
                 print("  + database back online")
             self.warned = False

@@ -279,3 +279,11 @@ RECEIVED  00 01 00 00 00 07 01 | 03 | 04 | 00 67 | 00 32
 - Fixes: logger warns "device clock jumped BACKWARDS"; alarm clear time never before raise time.
 - Cleanup with `logged_at` (`DELETE FROM readings WHERE logged_at >= '2026-10-22'`) → back to 792.5 kWh.
 - Rule: **one experiment = one simulated day**.
+
+### Data lineage detective work (22 Oct)
+- KPI 2 still 119.7 kWh/kWp after deleting today's rows → a third, forgotten run (Step 7A test, logged 21 Oct 15:50–16:02).
+- Found by grouping on the logger's clock: `SELECT date_trunc('hour', logged_at), count(*), min(time), max(time) ... GROUP BY 1`
+  (grouping by **minute** separates runs logged in the same hour).
+- `DELETE FROM readings WHERE logged_at >= '2026-10-21 15:21+03'` → **792.5 kWh / 6.60 kWh/kWp** ✓
+- **Interview sentence:** "Before computing KPIs I check data lineage — which source and which run each row came from. A logger
+  timestamp column next to the device timestamp makes it possible to find and remove duplicate or replayed data."

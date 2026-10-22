@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 
 from pymodbus.constants import ExcCodes
@@ -130,10 +131,14 @@ def build_simdevice(device: InverterDevice) -> SimDevice:
 
 async def main() -> None:
     ap = argparse.ArgumentParser(description="Simulated 100 kW SunSpec PV inverter")
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=5020)
-    ap.add_argument("--start", help='simulated start time, e.g. "2026-07-15 06:00"')
-    ap.add_argument("--speed", type=int, default=60, help="simulated seconds per real second")
+    # Defaults can come from environment variables (used by docker-compose.yml)
+    ap.add_argument("--host", default=os.environ.get("SIM_HOST", "127.0.0.1"),
+                    help="127.0.0.1 = this PC only; 0.0.0.0 = all network interfaces (Docker)")
+    ap.add_argument("--port", type=int, default=int(os.environ.get("SIM_PORT", 5020)))
+    ap.add_argument("--start", default=os.environ.get("SIM_START"),
+                    help='simulated start time, e.g. "2026-07-15 06:00"')
+    ap.add_argument("--speed", type=int, default=int(os.environ.get("SIM_SPEED", 60)),
+                    help="simulated seconds per real second")
     ap.add_argument("--weather", choices=["clear", "cloudy"], default="clear")
     ap.add_argument("--seed", type=int, default=None, help="random seed (repeatable runs)")
     ap.add_argument("--trace", action="store_true", help="print raw Modbus frames")
