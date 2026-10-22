@@ -1,218 +1,182 @@
-# Project 1 — Solar Inverter Simulator + Modbus Data Logger
+# PV Inverter Simulator + SCADA Data Logger
 
-> Portfolio project #1 of 5 · RES + IoT + Performance Engineering track
-> Author: Stamatis Platokoukis · Built step by step with Claude as a pair programmer
+**A complete, runnable mini-SCADA for a 100 kW photovoltaic plant** — a physics-based SunSpec inverter
+simulator talking Modbus TCP to a data logger with a PostgreSQL historian, an alarm manager and a
+Grafana control-room dashboard. One command starts everything.
 
-## What this project does
+`Python` · `Modbus TCP` · `SunSpec` · `PostgreSQL` · `SQL window functions` · `Docker Compose` · `Grafana` · `pytest`
 
-A real PV plant is a set of field devices (inverters, meters, weather stations) that a SCADA system
-polls over **Modbus TCP**. This project rebuilds that chain on one laptop:
+![Grafana dashboard of a simulated day with a fan failure, a 60 % curtailment and a grid trip](docs/dashboard.png)
 
+*A simulated day (16 April, Athens): clipping at 100 kW, a cooling-fan failure (HIGH_TEMP warning),
+grid-operator curtailment to 60 % (dashed limit line) and an over-frequency grid trip followed by a
+reconnect delay and power ramp — all produced by the simulator, detected by the logger and stored in the historian.*
+
+---
+
+## Quick start
+
+Requires only [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+```bash
+git clone https://github.com/stplato/inverter-modbus-logger.git
+cd inverter-modbus-logger
+docker compose up -d --build
 ```
- ┌──────────────────────────┐   Modbus TCP    ┌──────────────────────┐        ┌──────────────┐
- │  Inverter Simulator      │  (port 5020)    │  Data Logger         │  SQL   │  PostgreSQL  │
- │  - PV physics model      │ ◄────────────── │  - polls every 5 s   │ ─────► │  readings,   │
- │  - SunSpec register map  │   read regs     │  - decodes + scales  │        │  alarms      │
- │  - fault injection       │                 │  - detects alarms    │        │              │
- └──────────────────────────┘                 └──────────────────────┘        └──────────────┘
-      "the field device"                        "the SCADA poller"              "the historian"
+
+Open **http://localhost:3000** — the dashboard fills up live (one simulated hour per real minute).
+
+Make things happen (from a Python 3.12+ venv with `pip install -r requirements.txt`):
+
+```bash
+python -m logger.set_limit 60              # grid operator curtails the plant to 60 %
+python -m logger.set_limit off
+python -m simulator.inject fan_failure     # cooling fan dies -> overheating -> derating -> HIGH_TEMP alarm
+python -m simulator.inject none
+python -m simulator.inject grid_trip       # 51.6 Hz -> disconnect -> 3 min reconnect delay -> 10 %/min ramp
+python -m logger.probe read 40070 2        # send one raw Modbus request and see the bytes
 ```
 
-**Simulator** pretends to be a 100 kW PV inverter. It computes realistic values (AC/DC power,
-voltage, current, frequency, temperature, daily energy) from a simulated sun curve and publishes
-them in **SunSpec** registers, the standard map used by SMA, Fronius, SolarEdge, Huawei and others.
+---
 
-**Data Logger** behaves like the SCADA/EMS you worked with at Power Factors: it connects to the
-inverter, reads the registers, applies the scale factors, checks for alarms, and stores everything
-in a database.
+## Architecture
 
-## What I will be able to explain in an interview after this
+```mermaid
+flowchart LR
+    subgraph Field["Field device (simulated)"]
+        SIM["PV + inverter physics<br/>sun position · POA · cell temperature<br/>clipping · derating · grid protection"]
+        MAP["SunSpec register map<br/>models 1, 103, 123"]
+        SIM --> MAP
+    end
+    subgraph SCADA["SCADA logger"]
+        POLL["Poller<br/>discovery · block reads · scaling<br/>COMMS_LOST + backoff"]
+        ALM["Alarm manager<br/>device events · thresholds<br/>on-delay + hysteresis"]
+        POLL --> ALM
+    end
+    DB[("PostgreSQL historian<br/>devices · readings · alarms")]
+    GRAF["Grafana<br/>dashboard as code"]
+    MAP <-- "Modbus TCP :5020<br/>FC03 read / FC06 write" --> POLL
+    POLL -- "store-and-forward" --> DB
+    ALM --> DB
+    DB --> GRAF
+```
 
-- How Modbus works: holding vs input registers, function codes 03/04/06/16, 16-bit registers,
-  32-bit values across two registers, byte/word order, unit IDs, timeouts.
-- What SunSpec is and why scale factors exist (`value = raw × 10^SF`).
-- How a SCADA poller is designed: polling interval, error handling, reconnection, data quality flags.
-- How to model time-series measurement data in SQL.
-- How to package a multi-service system with Docker Compose.
+Four containers (`docker-compose.yml`): `simulator`, `logger`, `db`, `grafana`.
 
-## Tech stack
+## What it does
 
-| Area | Tool | Why |
+**Field device — `simulator/`**
+- Physics model of a 120 kWp / 100 kW plant in Athens: NOAA sun position, clear-sky irradiance,
+  plane-of-array (POA) on a 30° tilt, NOCT cell temperature, −0.37 %/°C power coefficient,
+  inverter efficiency curve, **clipping** at the AC rating (DC/AC ratio 1.2).
+- Exposes the data as a **SunSpec** device over **Modbus TCP**: common model (1), three-phase inverter (103)
+  with scale factors and a 32-bit energy counter, immediate controls (123) for **active-power curtailment**.
+- Realistic fault behaviour: **thermal derating** on cooling-fan failure, **over-frequency trip** with
+  grid-code reconnect delay and ramp-rate limit, standard SunSpec `Evt1` event flags.
+
+**SCADA logger — `logger/`**
+- **SunSpec discovery** (walks the model chain, no hard-coded addresses), **block reads**, scale factors,
+  "not implemented" values, signed/unsigned and 32-bit decoding.
+- Robust to the field: `COMMS_LOST` quality flag, **exponential backoff** reconnect, **energy-counter reset**
+  handling, device-clock-jump detection.
+- **Store-and-forward**: readings and alarm changes are buffered in memory when the database is down and
+  written when it returns — no data gaps; database reconnects never slow down device polling.
+
+**Historian & KPIs — `sql/`**
+- Normalized schema (`devices`, `readings`, `alarms`) with constraints that enforce data quality
+  (foreign keys, unique serials, check constraints, one active alarm per device+code).
+- KPI queries with **window functions**: daily energy from counter deltas (`LAG`, robust to resets),
+  specific yield, peak power, time per operating state (`LEAD`), data availability, hourly profile, alarm report.
+
+**Alarms — `logger/alarms.py`**
+- Three rule types: device events, SCADA thresholds with **on-delay + hysteresis** (no alarm flapping),
+  and communication loss. A comms loss never clears other alarms ("unknown ≠ cleared").
+
+**Dashboard — `grafana/`**
+- Datasource and dashboard **provisioned as code** (generated JSON in Git): KPI cards, power with limit line,
+  temperatures with alarm zones, state timeline, alarm table.
+
+## Results from the simulated day above
+
+| KPI | Clean clear day (15 April) | Day with events (16 April) |
 |---|---|---|
-| Language | Python 3.14 | Industry standard for energy data work |
-| Modbus | `pymodbus` 3.16 (new `SimData`/`SimDevice` API) | The most used Python Modbus library |
-| Database | PostgreSQL 16 | Same family as your Power Factors experience |
-| DB access | `psycopg` 3 | Modern PostgreSQL driver |
-| Testing | `pytest` | Proves the code works, interviewers look for it |
-| Packaging | Docker + Docker Compose | Runs the whole system with one command |
-| Version control | Git + GitHub | Your public portfolio |
+| Energy | 792.5 kWh | 742.3 kWh |
+| Specific yield | 6.60 kWh/kWp | 6.19 kWh/kWp |
+| Data availability | 99.6 % | 100 % |
 
-## Folder structure
+Loss breakdown of the −50 kWh (−6 %): curtailment ≈ 39 kWh (grid operator), grid trip ≈ 11 kWh (grid event),
+fan failure ≈ 1–2 kWh (equipment / O&M). The logger's energy (792.5 kWh) matches the physics model (792 kWh)
+within 0.1 %.
 
-```
-01-inverter-modbus-logger/
-├── README.md                  ← this file (plan + progress tracker)
-├── requirements.txt / .gitignore
-├── step1_modbus_basics/       ← Step 1: 20-line server + client (learning sandbox)
-├── common/
-│   └── sunspec.py             ← SunSpec models 1, 103, 123 (+ vendor 64001), encode/decode helpers
-├── simulator/                 ← THE FIELD DEVICE
-│   ├── pv_model.py            ← Step 2: sun position → POA → cell temp → DC → AC, clipping
-│   ├── sunspec_map.py         ← Step 3: measurements → SunSpec registers with scale factors
-│   └── server.py              ← Step 4: live Modbus TCP server with a fast simulated clock
-├── logger/                    ← THE SCADA
-│   ├── decoder.py             ← Step 5: discover models, read blocks, apply scale factors
-│   ├── poller.py              ← Step 5: poll loop, CSV storage, COMMS_LOST + reconnect
-│   ├── db.py                  ← Step 6C: PostgreSQL historian, store-and-forward buffer
-│   ├── alarms.py              ← Step 7B: alarm manager (device events, thresholds with delay + hysteresis, comms)
-│   ├── set_limit.py           ← Step 5: send a curtailment command (model 123)
-│   └── probe.py               ← "Modbus Poll" tool: send ONE read/write and see the bytes
-├── tests/                     ← pytest unit tests (21 tests)
-├── data/                      ← CSV output of the logger (not in Git)
-└── docs/                      ← notes and learning log
-```
+## How it was built
 
-Coming in Steps 6–10: `sql/schema.sql`, `logger/db.py`, `logger/alarms.py`, full `docker-compose.yml`, `grafana/` dashboards.
+Built incrementally in ten steps, each one tested before the next:
 
-## Quick start: everything with one command (Step 8)
+| Step | What was built |
+|---|---|
+| 1 | Modbus TCP fundamentals: minimal server and client, raw frame decoding |
+| 2 | PV + inverter physics model (sun position, POA, cell temperature, clipping) |
+| 3 | SunSpec register map with scale factors and 32-bit counters |
+| 4 | Live Modbus TCP inverter with a fast simulated clock and curtailment control |
+| 5 | SCADA logger: SunSpec discovery, block reads, comms-loss handling with backoff |
+| 6 | PostgreSQL historian: normalized schema, store-and-forward, KPI SQL with window functions |
+| 7 | Fault injection (fan failure, grid trip) and alarm manager with on-delay and hysteresis |
+| 8 | Docker Compose: the whole system with one command |
+| 9 | Grafana dashboard provisioned as code |
+| 10 | Documentation and portfolio README |
 
-Needs only [Docker Desktop](https://www.docker.com/products/docker-desktop/):
-```powershell
-docker compose up -d --build        # build + start database, inverter simulator, logger and Grafana
-# open http://localhost:3000          -> live dashboard (Step 10)
-docker compose logs -f logger       # watch the SCADA logger live (Ctrl + C to stop watching)
-python -m logger.set_limit 60       # commands from your PC still work (port 5020)
-docker compose stop                 # stop everything; data is kept
-```
-Choose the simulated day: `$env:SIM_START="2026-04-17 05:00"; docker compose up -d --build`
+## Engineering notes — problems found and fixed while building it
 
-## How to run the whole system (manually, for development)
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Logged energy of −90 kWh | Device restart reset the energy counter | Sum only positive counter deltas; warn on resets |
+| Polling slowed from 2 s to 3 s during a DB outage | Every poll waited for the DB connect timeout | Reconnect backoff for the database too |
+| SCADA saw GRID_DISCONNECT but not OVER_FREQUENCY | The event was shorter than the poll interval | Faster status polling; notes on latched events / push protocols |
+| HIGH_TEMP alarm would fire 4× in 10 polls | Temperature hovering at the threshold | On-delay (3 polls) + hysteresis (raise 70 °C, clear 65 °C) |
+| Daily yield of 120 kWh/kWp (impossible) | Two test runs mixed under one device ID | Physics sanity check + `logged_at` lineage column to remove replayed data |
+| Grid trip missing at high simulation speed | Simulation tick (5 min) longer than the event (2 min) | A pending trip is always seen by at least one step |
+| `W_SF = 0` crashed the inverter at 32.8 kW | 100 kW does not fit in a signed 16-bit register | Scale factor W_SF = 1; field rule: negative power at noon = overflow |
 
-Open **three** PowerShell windows in the project folder. In each, first run
-`.\.venv\Scripts\Activate.ps1`.
-
-**Window 1 — the inverter** (a whole day passes in ~15 minutes at 60x):
-```powershell
-python -m simulator.server
-python -m simulator.server --start "2026-04-15 10:00" --speed 120    # spring day, clipping at noon
-python -m simulator.server --weather cloudy                          # passing clouds
-```
-
-**Before starting:** the database must be running (Step 6):
-```powershell
-docker compose up -d
-```
-
-**Window 2 — the SCADA logger** (one line every 5 s → PostgreSQL + CSV backup):
-```powershell
-python -m logger.poller
-```
-
-**Window 3 — commands and checks:**
-```powershell
-python -m logger.set_limit 60        # curtail to 60 % -> logger shows THROTTLED, 60.0 kW
-python -m logger.set_limit off       # remove the limit
-python -m logger.set_limit 150       # invalid -> exception code 03
-python -m simulator.inject grid_trip # Step 7: 51.6 Hz -> disconnect, reconnect delay, ramp
-python -m simulator.inject fan_failure   # Step 7: heatsink overheats -> derating
-python -m simulator.inject none      # clear the fan failure
-python -m simulator.pv_model 2026-07-15   # print one full day from the physics model
-python -m pytest                     # run the unit tests
-python -m logger.probe read 40070 2  # one FC03 request, raw bytes shown
-python -m logger.probe write 40084 5000   # try to write a read-only register
-```
-
-Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries with
-1 s, 2 s, 4 s … waits, and reconnects by itself when you start the server again.
-
-### SunSpec map of the simulator
+## SunSpec register map (holding registers, FC03)
 
 | Address | Model | Content |
 |---|---|---|
 | 40000–40001 | — | `SunS` marker |
-| 40002–40069 | 1 Common | Manufacturer `RES-Lab`, model `SIM-INV-100K`, SN `GR-ATH-0001` |
-| 40070–40121 | 103 Three-phase inverter | A, V, W, Hz, VA, VAr, PF, WH (32-bit), DC A/V/W, temperatures, state |
+| 40002–40069 | 1 Common | Manufacturer, model, serial number, firmware |
+| 40070–40121 | 103 Three-phase inverter | A, V, W, Hz, VA, VAr, PF, WH (acc32), DC A/V/W, temperatures, state, Evt1 |
 | 40122–40147 | 123 Immediate controls | `WMaxLimPct` @ 40127, `WMaxLim_Ena` @ 40131 (writable) |
-| 40148–40153 | 64001 Vendor | Simulated clock (not standard SunSpec) |
-| 40154–40157 | 64002 Vendor | **Test** fault injection `TestFault` @ 40156 (Step 7, simulation only) |
+| 40148–40153 | 64001 Vendor | Simulated clock |
+| 40154–40157 | 64002 Vendor | Test fault injection (simulation only) |
 | 40158–40159 | — | `0xFFFF 0` end marker |
 
-## Time plan (8–10 h/week)
+## Project structure
 
-| Step | Topic | Hours | Status |
-|---|---|---|---|
-| 0 | Environment setup (Python, venv, Git, GitHub repo) | 2–3 | ✅ done |
-| 1 | Modbus fundamentals: a 20-line server and client | 3–4 | ✅ done |
-| 2 | PV + inverter physics model | 4–5 | ✅ walkthrough done |
-| 3 | SunSpec register map | 4–5 | ✅ walkthrough done |
-| 4 | Live Modbus TCP server | 3–4 | ✅ walkthrough done |
-| 5 | Data logger: polling, decoding, error handling | 4–5 | ✅ walkthrough done |
-| 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | ✅ done |
-| 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | ✅ done |
-| 8 | Docker Compose: whole system with one command | 3–4 | ✅ done |
-| 10 | **Grafana dashboard** on the PostgreSQL historian (done before Step 9) | 4–6 | hands-on |
-| 9 | Final README with dashboard screenshots, GitHub public, CV line | 3–4 | last |
+```
+├── simulator/            pv_model.py (physics) · sunspec_map.py · server.py (Modbus TCP) · inject.py
+├── logger/               decoder.py (SunSpec) · poller.py · db.py (historian) · alarms.py · set_limit.py · probe.py
+├── common/sunspec.py     SunSpec model definitions shared by device and SCADA
+├── sql/                  schema.sql · kpi_queries.sql
+├── grafana/              provisioning + dashboard JSON (+ build_dashboard.py)
+├── tests/                21 pytest tests (physics, SunSpec encoding, faults, alarm rules)
+├── Dockerfile · docker-compose.yml
+└── docs/                 dashboard.png · learning-log.md · step1-modbus-notes.md
+```
 
-**Approach (chosen 19 Oct 2026, option A):** Steps 2–5 were built in one go so the whole system
-can be seen working. Each file is then reviewed in its own session: explanation → a small change
-with a prediction → checkpoint questions. Steps 6–8 are built hands-on. Nothing goes on the CV
-until each file's checkpoints are passed.
+## Development without Docker
 
-## Progress tracker
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m pytest                                        # 21 tests
+docker compose up -d db                                 # database only
+python -m simulator.server --start "2026-04-17 05:00" --speed 60
+python -m logger.poller --interval 1
+```
 
-- [x] **Step 0 — Environment setup** (venv, Git, GitHub: https://github.com/stplato/inverter-modbus-logger)
-  - Checkpoint: a venv isolates each project's packages; `requirements.txt` makes it reproducible.
-- [x] **Step 1 — Modbus fundamentals** (`step1_modbus_basics/`, notes in `docs/step1-modbus-notes.md`)
-  - Checkpoints passed: holding vs input registers, FC03, scaling, exception 02, unit ID errors.
-- [x] **Step 0b — See the whole system run** (3 windows above, curtailment, comms loss)
-- [x] **Walkthrough 1 (Step 2) — `simulator/pv_model.py`**
-  - [x] Exercise: change `tilt` to 10° and 60°, predict and compare daily energy in July and December
-  - [x] Checkpoint: *Why does the inverter clip in April but not in July, although July has more sun?*
-  - [x] Checkpoint: *What is POA, and why is it higher than GHI on a tilted panel in winter?*
-  - [x] Checkpoint: *What does a DC/AC ratio of 1.2 mean and why do designers choose it?*
-- [x] **Walkthrough 2 (Step 3) — `common/sunspec.py` + `simulator/sunspec_map.py`**
-  - [x] Exercise: change `W_SF` to 0 and run at noon — what breaks and why?
-  - [x] Checkpoint: *Why is the energy counter (WH) 32-bit and split over two registers?*
-  - [x] Checkpoint: *How does a SCADA find model 103 without knowing its address in advance?*
-- [x] **Walkthrough 3 (Step 4) — `simulator/server.py`**
-  - [x] Exercise: run with `--trace` and decode one FC03 request by hand
-  - [x] Checkpoint: *Why does the server reject a write to the W register?*
-- [x] **Walkthrough 4 (Step 5) — `logger/`**
-  - [x] Exercise: stop the server for 30 s; look at the CSV — what do the COMMS_LOST rows mean for KPIs?
-  - [x] Checkpoint: *Why read a whole model in one request instead of one register at a time?*
-  - [x] Checkpoint: *What is exponential backoff and why not retry every 0.1 s?*
-  - [x] Checkpoint: *The logger once showed E_logged = -90 kWh. Why, and how does the fix handle a counter reset?*
-- [x] **Step 6 — PostgreSQL** (hands-on, ~5–6 h)
-  - [x] 6A: Docker Desktop installed, `docker compose up -d`, first SQL (CREATE / INSERT / SELECT / aggregates)
-  - [x] 6B: design the tables (`devices`, `readings`, `alarms`) → `sql/schema.sql`
-    - [x] Checkpoint: *Why does `readings` store only `device_id`, not the inverter's name and serial number?*
-  - [x] 6C: logger writes every poll to PostgreSQL (`logger/db.py`, psycopg), store-and-forward + DB backoff
-  - [x] 6D: KPI queries (`sql/kpi_queries.sql`): daily energy (LAG), specific yield, peak, state hours (LEAD), availability, hourly profile
-- [x] **Step 7 — Alarms + fault injection** (hands-on)
-  - [x] 7A: fault injection (`simulator/inject.py`: fan_failure, grid_trip), SunSpec `Evt1` events, derating, reconnect delay + ramp
-    - [x] Exercise: SCADA missed the over-frequency between two polls → latched events / event logs / push protocols
-  - [x] 7B: alarm manager (`logger/alarms.py`): raise/clear in `alarms` table, delay + hysteresis, COMMS_LOST alarm
-    - [x] Checkpoint: *What happens with "alarm when T > 70, clear when T ≤ 70" if T hovers around 70 °C?*
-- [x] **Step 8 — Docker Compose** (hands-on): `docker compose up -d --build` runs db + simulator + logger
-- [ ] **Step 10 — Grafana dashboard** (hands-on, ~4–6 h; done before Step 9)
-  - [ ] Grafana container in `docker-compose.yml`, PostgreSQL data source provisioned automatically
-  - [ ] Panels: AC power / DC voltage / temperature over the day, inverter state (MPPT / THROTTLED / SLEEPING)
-  - [ ] KPI cards: energy today, peak power, data availability %
-  - [ ] Alarm table (from Step 7); clipping and curtailment visible on the power curve
-  - [ ] Dashboard saved as JSON in `grafana/` so it's version-controlled
-- [ ] **Step 9 — Finish and publish** (last)
-  - [ ] README with architecture diagram and dashboard screenshots
-  - [ ] Repo switched to public, CV "Projects" line written
+Passwords in `docker-compose.yml` are development defaults; override them with a `.env` file.
 
-## Troubleshooting notes
+---
 
-- **`(.venv)` shows but `python` is the global one:** Windows' App execution alias
-  (`AppData\Local\Microsoft\WindowsApps\python.exe`) wins over the venv. Check with
-  `Get-Command python` and `python -c "import sys; print(sys.prefix)"`. Fix: Settings →
-  *Manage app execution aliases* → turn off `python.exe` and `python3.exe`.
-- **`ModuleNotFoundError: No module named 'simulator'`:** run from the project folder and use
-  `python -m simulator.server` (with `-m` and dots), not `python simulator/server.py`.
-- **`Address already in use` / `WinError 10048`:** another server is still running on port 5020.
-  Close the other window, or use `--port 5021` on both server and logger.
-- **pymodbus 3.16:** the old `ModbusSlaveContext`/`ModbusDeviceContext` datastore is deprecated.
-  This project uses the new `SimData` / `SimDevice` API so it keeps working with pymodbus 4.
+**Author:** Stamatis Platokoukis — Mechanical/Energy Engineer (NTUA), SCADA & renewable-energy data.
+Built as a hands-on learning project with an AI pair-programmer; every component was run, tested and reviewed
+step by step (see `docs/learning-log.md`).

@@ -13,3 +13,6 @@ Thumbs.db
 
 # Logger output
 data/
+
+# Personal notes (interview prep, progress tracker) - kept on my PC only
+personal/
