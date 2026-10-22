@@ -287,3 +287,22 @@ RECEIVED  00 01 00 00 00 07 01 | 03 | 04 | 00 67 | 00 32
 - `DELETE FROM readings WHERE logged_at >= '2026-10-21 15:21+03'` → **792.5 kWh / 6.60 kWh/kWp** ✓
 - **Interview sentence:** "Before computing KPIs I check data lineage — which source and which run each row came from. A logger
   timestamp column next to the device timestamp makes it possible to find and remove duplicate or replayed data."
+
+## Step 8 — Docker Compose (`Dockerfile`, `docker-compose.yml`)
+
+- `docker compose up -d --build` → 3 containers: **pv-historian** (PostgreSQL, healthy), **pv-inverter**, **pv-logger**. First build worked.
+- **Image vs container:** image = recipe (built once); container = a running copy. One image `pv-scada` runs twice (simulator, logger)
+  with different commands.
+- Configuration by **environment variables** (`SIM_START`, `INVERTER_HOST`, `POLL_INTERVAL`, `PV_DB_DSN`) — standard for containers.
+- Logger creates the schema itself (all `IF NOT EXISTS`) → a fresh clone needs zero manual steps.
+- `depends_on: condition: service_healthy` → the logger starts only when PostgreSQL really accepts connections.
+- `set_limit 60` from the PC reached the inverter inside Docker (port 5020 published).
+- Curtailment only costs energy when available power > limit (09:06–09:44 MPPT below 60 kW; THROTTLED only from 09:46).
+
+### Networking inside Compose
+- Each container has its own network: **127.0.0.1 = the container itself**.
+- Services find each other by **service name** (`simulator`, `db`) on the compose network, using the **container port** (5432).
+- `"5433:5432"` = PC port 5433 → container port 5432, only for access from outside.
+- **Interview sentence:** "In Docker Compose each container has its own network namespace, so localhost means the container itself.
+  Services reach each other by service name on the compose network, using the container port; host port mappings are only for
+  access from outside."

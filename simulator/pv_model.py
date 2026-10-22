@@ -238,12 +238,14 @@ class Inverter:
     _reconnect_at: datetime | None = None
     _ramp_pct: float = 100.0
     _was_disconnected: bool = False
+    _trip_pending: bool = False         # guarantees the trip is seen even at high --speed
 
     def inject(self, kind: str, now: datetime) -> None:
         """Start or clear a test fault (simulation only - real inverters can't do this!)."""
         if kind == "grid_trip":
             self.fault = "grid_trip"
             self._grid_trip_until = now + timedelta(minutes=2)    # over-frequency lasts 2 min
+            self._trip_pending = True       # at least one step must see it (1 tick can be > 2 min)
         elif kind == "fan_failure":
             self.fault = "fan_failure"
         else:
@@ -289,8 +291,9 @@ class Inverter:
         # --- grid frequency (a grid_trip fault pushes it to 51.6 Hz) -----------
         snap.hz = cfg.f_grid + n(0, 0.01)
         if self.fault == "grid_trip":
-            if self._grid_trip_until and t_local < self._grid_trip_until:
+            if (self._grid_trip_until and t_local < self._grid_trip_until) or self._trip_pending:
                 snap.hz = 51.6 + n(0, 0.02)
+                self._trip_pending = False
             else:
                 self.fault = "none"                  # the grid event is over
         grid_ok = F_TRIP_LOW <= snap.hz <= F_TRIP_HIGH

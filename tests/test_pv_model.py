@@ -78,3 +78,12 @@ def test_fan_failure_derates_power():
     s = _run(Inverter(seed=1), datetime(2026, 4, 15, 12, 0), 60, inject_at=0, kind="fan_failure")
     assert s[-1].t_heatsink > 69                     # hot heatsink
     assert s[-1].ac_w < 95_000                       # derated below the 100 kW clipping level
+
+
+def test_grid_trip_is_seen_even_with_big_time_steps():
+    inv = Inverter(seed=1)
+    t = datetime(2026, 4, 15, 12, 0)
+    inv.step(t)
+    inv.inject("grid_trip", t)
+    s = inv.step(t + timedelta(minutes=5))          # one 5-minute tick (= --speed 300)
+    assert s.state == ST_FAULT

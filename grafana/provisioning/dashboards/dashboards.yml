@@ -1,0 +1,10 @@
+# Step 10 - load every dashboard JSON file in /etc/grafana/dashboards
+apiVersion: 1
+providers:
+  - name: pv-scada
+    folder: PV SCADA
+    type: file
+    disableDeletion: true
+    allowUiUpdates: true            # you can edit in the browser; export JSON to keep changes
+    options:
+      path: /etc/grafana/dashboards

@@ -11,10 +11,10 @@
 # Choose the simulated day (one experiment = one day):
 #   PowerShell:  $env:SIM_START="2026-04-17 05:00"; docker compose up -d --build
 #
-#    +-----------+   Modbus TCP   +---------+    SQL    +-------------------+
-#    | simulator | <------------- | logger  | --------> | db (PostgreSQL)   |
-#    | :5020     |  "simulator"   |         |   "db"    | :5432 (PC: 5433)  |
-#    +-----------+                +---------+           +-------------------+
+#    +-----------+   Modbus TCP   +---------+    SQL    +-------------------+   SQL   +-----------+
+#    | simulator | <------------- | logger  | --------> | db (PostgreSQL)   | <------ | grafana   |
+#    | :5020     |  "simulator"   |         |   "db"    | :5432 (PC: 5433)  |   "db"  | :3000     |
+#    +-----------+                +---------+           +-------------------+         +-----------+
 #    Inside Docker, services find each other by NAME, not by 127.0.0.1.
 
 services:
@@ -68,6 +68,27 @@ services:
         condition: service_healthy          # wait until PostgreSQL really accepts connections
       simulator:
         condition: service_started
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:11.3.0
+    container_name: pv-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}        # dev-only default
+      GF_AUTH_ANONYMOUS_ENABLED: "true"                              # view dashboards without login
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/pv-plant.json
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-solar_dev}             # used by the datasource file
+      TZ: Europe/Athens
+    ports:
+      - "3000:3000"        # open http://localhost:3000
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro          # datasource + dashboard loader
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro              # dashboard JSON (dashboard-as-code)
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

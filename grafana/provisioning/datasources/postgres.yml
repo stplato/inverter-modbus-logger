@@ -1,0 +1,17 @@
+# Step 10 - Grafana connects to the PostgreSQL historian automatically ("provisioning").
+apiVersion: 1
+datasources:
+  - name: PV Historian
+    uid: pv-pg
+    type: grafana-postgresql-datasource
+    url: db:5432                     # service name + container port (Step 8 networking)
+    user: solar
+    secureJsonData:
+      password: ${POSTGRES_PASSWORD}
+    jsonData:
+      database: scada
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    isDefault: true
+    editable: false

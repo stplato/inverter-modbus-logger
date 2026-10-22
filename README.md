@@ -67,7 +67,7 @@ in a database.
 │   ├── alarms.py              ← Step 7B: alarm manager (device events, thresholds with delay + hysteresis, comms)
 │   ├── set_limit.py           ← Step 5: send a curtailment command (model 123)
 │   └── probe.py               ← "Modbus Poll" tool: send ONE read/write and see the bytes
-├── tests/                     ← pytest unit tests (20 tests)
+├── tests/                     ← pytest unit tests (21 tests)
 ├── data/                      ← CSV output of the logger (not in Git)
 └── docs/                      ← notes and learning log
 ```
@@ -78,7 +78,8 @@ Coming in Steps 6–10: `sql/schema.sql`, `logger/db.py`, `logger/alarms.py`, fu
 
 Needs only [Docker Desktop](https://www.docker.com/products/docker-desktop/):
 ```powershell
-docker compose up -d --build        # build + start database, inverter simulator and logger
+docker compose up -d --build        # build + start database, inverter simulator, logger and Grafana
+# open http://localhost:3000          -> live dashboard (Step 10)
 docker compose logs -f logger       # watch the SCADA logger live (Ctrl + C to stop watching)
 python -m logger.set_limit 60       # commands from your PC still work (port 5020)
 docker compose stop                 # stop everything; data is kept
@@ -148,7 +149,7 @@ Try stopping Window 1 with Ctrl + C: the logger prints `COMMS_LOST`, retries wit
 | 5 | Data logger: polling, decoding, error handling | 4–5 | ✅ walkthrough done |
 | 6 | PostgreSQL schema + storing readings (Docker for the DB) | 5–6 | ✅ done |
 | 7 | Alarms + fault injection (offline, over-temperature, grid trip) | 3–4 | ✅ done |
-| 8 | Docker Compose: whole system with one command | 3–4 | hands-on |
+| 8 | Docker Compose: whole system with one command | 3–4 | ✅ done |
 | 10 | **Grafana dashboard** on the PostgreSQL historian (done before Step 9) | 4–6 | hands-on |
 | 9 | Final README with dashboard screenshots, GitHub public, CV line | 3–4 | last |
 
@@ -192,7 +193,7 @@ until each file's checkpoints are passed.
     - [x] Exercise: SCADA missed the over-frequency between two polls → latched events / event logs / push protocols
   - [x] 7B: alarm manager (`logger/alarms.py`): raise/clear in `alarms` table, delay + hysteresis, COMMS_LOST alarm
     - [x] Checkpoint: *What happens with "alarm when T > 70, clear when T ≤ 70" if T hovers around 70 °C?*
-- [ ] **Step 8 — Docker Compose** (hands-on)
+- [x] **Step 8 — Docker Compose** (hands-on): `docker compose up -d --build` runs db + simulator + logger
 - [ ] **Step 10 — Grafana dashboard** (hands-on, ~4–6 h; done before Step 9)
   - [ ] Grafana container in `docker-compose.yml`, PostgreSQL data source provisioned automatically
   - [ ] Panels: AC power / DC voltage / temperature over the day, inverter state (MPPT / THROTTLED / SLEEPING)
